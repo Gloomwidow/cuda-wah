@@ -1,6 +1,11 @@
 #pragma once
-#define UInt unsigned int
-#define ULong unsigned long int
+#ifndef UINT
+#define UINT unsigned int
+#endif // !UINT
+
+#ifndef ULONG
+#define ULONG unsigned long long
+#endif // !ULONG
 
 class IntDataGenerator 
 {
@@ -9,8 +14,8 @@ public:
 	{
 
 	}
-	virtual UInt* GetDeviceData(int blocks) = 0;
-	virtual UInt* GetHostData(int blocks) = 0;
+	virtual UINT* GetDeviceData(int blocks) = 0;
+	virtual UINT* GetHostData(int blocks) = 0;
 };
 
 class LongIntDataGenerator
@@ -20,7 +25,7 @@ public:
 	{
 
 	}
-	virtual ULong* GetDeviceData(int blocks) = 0;
-	virtual ULong* GetHostData(int blocks) = 0;
+	virtual ULONG* GetDeviceData(int blocks) = 0;
+	virtual ULONG* GetHostData(int blocks) = 0;
 };
 

@@ -10,13 +10,13 @@ public:
 	}
 	unsigned int* GetDeviceData(int blocks)
 	{
-		unsigned int* result = new unsigned int[blocks];
-		for (int i = 0; i < blocks; i++) result[i] = 0;
-		return result;
+		return nullptr;
 	}
 	
 	unsigned int* GetHostData(int blocks)
 	{
-		return nullptr;
+		unsigned int* result = new unsigned int[blocks];
+		for (int i = 0; i < blocks; i++) result[i] = 0;
+		return result;
 	}
 };
