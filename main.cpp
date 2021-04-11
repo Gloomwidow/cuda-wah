@@ -7,6 +7,7 @@
 #include <iostream>
 
 extern void CudaHello();
+extern void BallotSyncWAH(UINT* input);
 
 //test function for bitwise operations
 void bits(int a)
@@ -17,17 +18,6 @@ void bits(int a)
 
 int main() {
     printf("Hello host!\n");
-    CudaHello(); 
-    IntDataGenerator* gen = new ZerosGenerator();
-    UINT* tab = gen->GetHostData(15);
-    for (int i = 0; i < 15; i++)
-    {
-        printf("%u ", tab[i]);
-    }
-    printf("\n");
-    bits(1 << 31);
-    bits((1 << 32));
-    bits(~(1 << 32));
-    printf("%d\n",(1 & (2345 >> (6 - 1))));
+    BallotSyncWAH(nullptr);
     return 0;
 }
