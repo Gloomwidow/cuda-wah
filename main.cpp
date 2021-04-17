@@ -5,9 +5,11 @@
 #include <climits>
 #include <bitset>
 #include <iostream>
+#include "defines.h"
 
 extern void CudaHello();
 extern void BallotSyncWAH(UINT* input);
+extern void SharedMemWAH(UINT* input, size_t size);
 
 //test function for bitwise operations
 void bits(int a)
@@ -17,7 +19,7 @@ void bits(int a)
 }
 
 int main() {
-    printf("Hello host!\n");
-    BallotSyncWAH(nullptr);
+    SharedMemWAH(nullptr, 2);
+	//BallotSyncWAH(nullptr);
     return 0;
 }
