@@ -14,7 +14,6 @@
 
 #define WARPS_IN_BLOCK 1
 
-
 //__global__ void scan(float *g_odata, float *g_idata, int n)
 //{
 //	extern __shared__ float temp[]; // allocated on invocation
@@ -55,6 +54,7 @@ __global__ void SharedMemKernel(UINT* input, UINT* output)
 	int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
 	int lane_id = threadIdx.x % warpSize;
 	int warp_id = threadIdx.x / warpSize;
+	const int warps_count = blockDim.x / warpSize;
 	UINT gulp = input[thread_id];
 
 	// calculate type of the word
@@ -76,7 +76,7 @@ __global__ void SharedMemKernel(UINT* input, UINT* output)
 
 	unsigned warp_begins_mask = __ballot_sync(FULL_MASK, is_begin);
 
-	__shared__ segment segments[WARPS_IN_BLOCK];
+	__shared__ segment segments[WARPS_IN_BLOCK];	// TODO: make it allocated dynamically
 
 	int segment_len;					// find ID of next thread-beginning and thus the length of the section
 	if (is_begin)
@@ -107,7 +107,7 @@ __global__ void SharedMemKernel(UINT* input, UINT* output)
 		}
 		__syncthreads();	// TODO: should be outside conditional statement
 
-		// check if the first thread-beginning in warp is really thread-beginning in the context of block...
+		// check if the first thread-beginning in warp is really thread-beginning in the context of the block...
 		if (lane_id == 0)
 		{
 			if (warp_id > 0)			
@@ -119,11 +119,10 @@ __global__ void SharedMemKernel(UINT* input, UINT* output)
 			}
 		}
 
-		// ...if no, the last thread-beginning form prev. warp should sth to its `segment_len`
-		// ostatni wątek-początek w warpie
+		// ...if no, the last thread-beginning form prev. warp should add sth to its `segment_len`
 		if (segment_len == 0)
 		{
-			for (int i = warp_id + 1; i < WARPS_IN_BLOCK; i++)
+			for (int i = warp_id + 1; i < warps_count; i++)
 			{
 				if (segments[i].l_end_type.x == w_type)
 					segment_len += segments[i].l_end_len.x;			// check types
@@ -150,14 +149,36 @@ __global__ void SharedMemKernel(UINT* input, UINT* output)
 
 	// next sum the largest values for each warp
 	__shared__ int sums[WARPS_IN_BLOCK];
-	// write the sum of the warp to smem
+	// write the sum of the warp to sh_mem
 	if (lane_id == warpSize - 1)
 		sums[warp_id] = value;
 	__syncthreads();
 
-	// TODO: inter-warps scan!
-	//
-	//
+	// the same shfl scan operation, but performed on warp sums
+	// this can be safely done by single warp
+	if (warp_id == 0 && lane_id < warps_count)
+	{
+		int warp_sum = sums[lane_id];
+
+		int mask = (1 << warps_count) - 1;
+		for (int i = 1; i <= warps_count; i *= 2)
+		{
+			int n = __shfl_up_sync(mask, warp_sum, i, warps_count);
+			if (lane_id >= i)
+				warp_sum += n;
+		}
+
+		sums[lane_id] = warp_sum;
+	}
+	__syncthreads();
+
+	// gather
+	//if (is_begin)?
+	if (warp_id > 0)
+	{
+		value += sums[warp_id - 1];
+	}
+
 
 	if (is_begin)
 	{
@@ -187,7 +208,7 @@ void printBits(size_t const size, void const * const ptr)
 
 void SharedMemWAH(UINT* input)//, size_t size)
 {
-	size_t size = 32;
+	size_t size = 64;
 	UINT* test = new UINT[size];
 	UINT* output = new UINT[size];
 
