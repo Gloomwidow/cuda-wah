@@ -1,8 +1,4 @@
-﻿//#include "cuda.h"
-#include "device_launch_parameters.h"
-#include "cuda_runtime_api.h"
-#include "vector_types.h"
-#include "vector_functions.h"
+﻿#include "cuda_runtime.h"
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -12,7 +8,7 @@
 #define FULL_WORD	1
 #define TAIL_WORD	2
 
-#define WARPS_IN_BLOCK 1
+#define WARPS_IN_BLOCK 2
 
 //__global__ void scan(float *g_odata, float *g_idata, int n)
 //{
@@ -48,13 +44,11 @@ typedef struct segment {
 
 __global__ void SharedMemKernel(UINT* input, UINT* output)
 {
-	//enum : unsigned { warp_size = 32, log_warp_size = 5 };
-	//auto lane_id = threadIdx.x & (warp_size - 1);
-	//auto warp_id = threadIdx.x >> log_warp_size;
-	int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
-	int lane_id = threadIdx.x % warpSize;
-	int warp_id = threadIdx.x / warpSize;
+	const int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+	const int lane_id = threadIdx.x % warpSize;
+	const int warp_id = threadIdx.x / warpSize;
 	const int warps_count = blockDim.x / warpSize;
+
 	UINT gulp = input[thread_id];
 
 	// calculate type of the word
@@ -77,66 +71,47 @@ __global__ void SharedMemKernel(UINT* input, UINT* output)
 	unsigned warp_begins_mask = __ballot_sync(FULL_MASK, is_begin);
 
 	__shared__ segment segments[WARPS_IN_BLOCK];	// TODO: make it allocated dynamically
-
-	int segment_len;					// find ID of next thread-beginning and thus the length of the section
+	int segment_len;
 	if (is_begin)
-	{
-		if (lane_id == warpSize - 1)	// bit shift: "(int) >> 32" is not defined
-		{
-			segment_len = 0;
-		}
-		else
-		{
-			unsigned temp_mask = warp_begins_mask >> (lane_id + 1);
-			segment_len = __ffs(temp_mask);							// returns 0 if temp_mask == 0
-			
-		}
-		//int segment = (lane_id == warpSize - 1) ? 0 : __ffs(warp_begins_mask >> (lane_id + 1));
-
-		if (segment_len == 0)			// the last thread-beginning in warp
+	{																									// find ID of the next thread-beginning and thus the length of the section
+		segment_len = (lane_id == warpSize - 1) ? 0 : __ffs(warp_begins_mask >> (lane_id + 1));			// note: bit shift "(int) >> 32" is not defined
+																										// note: __ffs(0) = 0
+		if (segment_len == 0)	// the last thread-beginning in warp
 		{
 			segment_len = warpSize - lane_id;
 
 			segments[warp_id].r_end_type = make_uchar1(w_type);
 			segments[warp_id].r_end_len = make_uchar1(segment_len);
 		}
-		if (lane_id == 0)				// the first thread-beginning in warp
+		if (lane_id == 0)		// the first thread-beginning in warp
 		{
 			segments[warp_id].l_end_type = make_uchar1(w_type);
 			segments[warp_id].l_end_len = make_uchar1(segment_len);
 		}
-		__syncthreads();	// TODO: should be outside conditional statement
+	}
+	__syncthreads();
 
-		// check if the first thread-beginning in warp is really thread-beginning in the context of the block...
-		if (lane_id == 0)
-		{
-			if (warp_id > 0)			
-			{
-				if (segments[warp_id - 1].r_end_type.x == w_type)
-				{
-					is_begin = false;
-				}
-			}
-		}
+	if (is_begin)
+	{
+		if (warp_id > 0 && lane_id == 0 && (segments[warp_id - 1].r_end_type.x == w_type))				// check if the first thread-beginning in warp is really
+			is_begin = false;																			// thread-beginning in the context of the block...
 
-		// ...if no, the last thread-beginning form prev. warp should add sth to its `segment_len`
-		if (segment_len == 0)
+		if (segment_len == 0)																			// ...if not, the last thread-beginning form prev. warp should add sth to its `segment_len`
 		{
-			for (int i = warp_id + 1; i < warps_count; i++)
+			for (int i = warp_id + 1; i < warps_count && segments[i].l_end_type.x == w_type; i++)
 			{
-				if (segments[i].l_end_type.x == w_type)
-					segment_len += segments[i].l_end_len.x;			// check types
-				else
+				segment_len += segments[i].l_end_len.x;		// check types
+				if (segments[i].l_end_len.x != warpSize)
 					break;
 			}
 		}
 	}
-	// here every thread-beginning knows its length (in-block boundaries)
+	// here every thread-beginning knows its segment's length (in-block boundaries)
 
-	// in-warp scan, not work-efficient implementation
+	// in-warp scan, taken from https://github.com/NVIDIA/cuda-samples/blob/master/Samples/shfl_scan/shfl_scan.cu
+	// not work-efficient implementation
 	// TODO: do better implementation
 	// TODO: scan should be exclusive
-	// taken from https://github.com/NVIDIA/cuda-samples/blob/master/Samples/shfl_scan/shfl_scan.cu
 	int value = is_begin ? 1 : 0;
 	for (int i = 1; i <= warpSize; i *= 2)
 	{
@@ -145,17 +120,15 @@ __global__ void SharedMemKernel(UINT* input, UINT* output)
 		if (lane_id >= i)
 			value += n;
 	}
-	// value now holds the scan value for the individual thread
 
-	// next sum the largest values for each warp
+	// inter-warp scan
 	__shared__ int sums[WARPS_IN_BLOCK];
-	// write the sum of the warp to sh_mem
 	if (lane_id == warpSize - 1)
 		sums[warp_id] = value;
 	__syncthreads();
 
 	// the same shfl scan operation, but performed on warp sums
-	// this can be safely done by single warp
+	// this can be safely done by a single warp
 	if (warp_id == 0 && lane_id < warps_count)
 	{
 		int warp_sum = sums[lane_id];
@@ -167,21 +140,16 @@ __global__ void SharedMemKernel(UINT* input, UINT* output)
 			if (lane_id >= i)
 				warp_sum += n;
 		}
-
 		sums[lane_id] = warp_sum;
 	}
 	__syncthreads();
 
-	// gather
-	//if (is_begin)?
-	if (warp_id > 0)
-	{
-		value += sums[warp_id - 1];
-	}
-
-
 	if (is_begin)
 	{
+		// gather
+		if (warp_id > 0)
+			value += sums[warp_id - 1];
+
 		if (w_type == EMPTY_WORD)
 			output[value - 1] = get_compressed(segment_len, 0);
 		else if (w_type == FULL_WORD)
@@ -233,10 +201,6 @@ void SharedMemWAH(UINT* input)//, size_t size)
 		}
 	}
 	printf("\n");
-	//for (size_t i = 0; i < size; i++)
-	//{
-	//	printBits(sizeof(UINT), test + i);
-	//}
 
 	UINT* d_input;
 	UINT* d_output;
