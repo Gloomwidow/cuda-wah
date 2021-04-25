@@ -86,7 +86,6 @@ __device__ UINT reverse(UINT src)
 
 __global__ void ballot_warp_compress(UINT* input, UINT* output)
 {
-    grid_group g = this_grid();
     int global_id = blockIdx.x * blockDim.x + threadIdx.x;
     int warp_id = global_id % 32;
 
