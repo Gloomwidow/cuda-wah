@@ -42,7 +42,7 @@ typedef struct segment {
 	uchar1 r_end_len;
 } segment;
 
-__global__ void SharedMemKernel(UINT* input, size_t inputSize, UINT* output)
+__global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 {
 	const int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
 	const int lane_id = threadIdx.x % warpSize;
@@ -169,7 +169,7 @@ void printBits(size_t const size, void const * const ptr)
 {
 	unsigned char *b = (unsigned char*)ptr;
 	unsigned char byte;
-	int i, j;
+	size_t i, j;
 
 	for (i = size - 1; i >= 0; i--) {
 		for (j = 7; j >= 0; j--) {
@@ -180,39 +180,15 @@ void printBits(size_t const size, void const * const ptr)
 	puts("");
 }
 
-void SharedMemWAH(UINT* input)//, size_t size)
+UINT* SharedMemWAH(int size, UINT* input)//, size_t size)
 {
-	size_t size = 32;
-	UINT* test = new UINT[size];
-	UINT* output = new UINT[size];
-
-	srand(time(NULL));
-	for (size_t i = 0; i < size; i++)
-	{
-		int roll = rand() % 3;
-		if (roll == 0)
-		{
-			test[i] = 0x7FFFFFFF; //all ones
-			printf("1");
-		}
-		if (roll == 1)
-		{
-			test[i] = 256; // not valid for compression
-			printf("x");
-		}
-		if (roll == 2)
-		{
-			test[i] = 0x00000000; // all zeros
-			printf("0");
-		}
-	}
-	printf("\n");
+	UINT* result = nullptr;
 
 	UINT* d_input;
 	UINT* d_output;
 	CUDA_CHECK(cudaMalloc((void**)&d_input, size * sizeof(UINT)), FreeInput);		// reinterpret_cast<>
 	CUDA_CHECK(cudaMalloc((void**)&d_output, size * sizeof(UINT)), Free);
-	CUDA_CHECK(cudaMemcpy(d_input, test, size * sizeof(UINT), cudaMemcpyHostToDevice), Free);
+	CUDA_CHECK(cudaMemcpy(d_input, input, size * sizeof(UINT), cudaMemcpyHostToDevice), Free);
 
 	int threads_per_block = 64;
 	int blocks = size / threads_per_block;
@@ -220,21 +196,18 @@ void SharedMemWAH(UINT* input)//, size_t size)
 		blocks++;
 
 	SharedMemKernel<<<blocks, threads_per_block>>>(d_input, size, d_output);
+
 	CUDA_CHECK(cudaGetLastError(), Free);
 	CUDA_CHECK(cudaDeviceSynchronize(), Free);
 
+	UINT* output = new UINT[size];
 	CUDA_CHECK(cudaMemcpy(output, d_output, size * sizeof(UINT), cudaMemcpyDeviceToHost), Free);
-
-	for (size_t i = 0; i < size; i++)
-	{
-		printBits(sizeof(UINT), output + i);
-	}
+	result = output;
 
 Free:
 	CUDA_CHECK(cudaFree(d_output), FreeInput);
 FreeInput:
 	CUDA_CHECK(cudaFree(d_input), Fin);
 Fin:
-	delete output;
-	delete test;
+	return result;
 }

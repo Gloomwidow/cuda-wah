@@ -10,18 +10,17 @@
 #include <iostream>
 #include "defines.h"
 
-extern void SharedMemWAH(UINT* input);// , size_t size);
-
+extern UINT* SharedMemWAH(int data_size, UINT* input);// , size_t size);
 
 int main() {
-	  SharedMemWAH(nullptr);//, 2);
     if (UNIT_TESTING)
     {
         UnitTests(&BallotSyncWAH);
+		//UnitTests(&SharedMemWAH);
     }
     else
     {
-        UINT size = 32 * 20000000;
+        UINT size = 32;
         printf("Generating tests...\n");
         UINT* data = new UINT[size];
         for (int i = 0; i < size; i++)
@@ -35,7 +34,10 @@ int main() {
         cudaMalloc((UINT**)&d_data, sizeof(UINT) * size);
         cudaMemcpy(d_data, data, sizeof(UINT) * size, cudaMemcpyHostToDevice);
         delete[] data;
-        Benchmark(&BallotSyncWAH, size, d_data, 10, "1. __ballot_sync() + 2x thrust::remove_if", true);
+
+		Benchmark(&BallotSyncWAH, size, d_data, 10, "1. __ballot_sync() + 2x thrust::remove_if", true);
+		Benchmark(&SharedMemWAH, size, d_data, 10, "2. Shared Mem", true);
+
         cudaFree(d_data);      
     }
     return 0;
