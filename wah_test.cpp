@@ -8,7 +8,7 @@
 
 void Test(UINT* (*tested_function)(UINT*), UINT* data, UINT* expected, std::string test_name)
 {
-	printf("TEST '%s' - Input Size: %d \n", test_name.c_str(), sizeof(data) / sizeof(UINT));
+	printf("TEST '%s' - Input Size: %u \n", test_name.c_str(), sizeof(data) / sizeof(UINT));
 	UINT* actual = tested_function(data);
 	if (actual == nullptr)
 	{
@@ -61,13 +61,13 @@ void Benchmark(UINT* (*benchmark_function)(UINT*), UINT* data, int repeats, std:
 		cudaEventSynchronize(stop);
 		float exec_time = 0;
 		cudaEventElapsedTime(&exec_time, start, stop);
+		cudaEventDestroy(start);
+		cudaEventDestroy(stop);
 		exec_time /= 1000;
 		if(print_times) printf("RUN %d: %f\n", i+1 , exec_time );
 		if (max < exec_time) max = exec_time;
 		if (i == 0 || min > exec_time) min = exec_time;
 		mean += exec_time;
-		cudaEventDestroy(start);
-		cudaEventDestroy(stop);
 	}
 	printf("MIN: %fs | MEAN: %fs | MAX: %fs \n", min, mean / repeats, max);
 }

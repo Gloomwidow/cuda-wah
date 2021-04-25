@@ -84,57 +84,6 @@ __device__ UINT reverse(UINT src)
     return reverse_num;
 }
 
-
-
-__global__ void ballot_warp_compress(UINT* input, UINT* output)
-{
-    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
-    int warp_id = global_id % 32;
-
-    bool is_zero = is_zeros(input[global_id]);
-    bool is_one = is_ones(input[global_id]);
-
-    UINT zeros = __ballot_sync(0xffffffff, is_zero);
-    UINT ones = __ballot_sync(0xffffffff, is_one);
-    zeros = reverse(zeros);
-    ones = reverse(ones);
-    bool checks_next = true;
-    if (!is_zero && !is_one) //not suitable for compression
-    {
-        checks_next = false;
-    }
-    else
-    {
-        if (warp_id > 0)
-        {
-            int previous_zero = get_bit(zeros, warp_id-1);
-            int previous_one = get_bit(ones, warp_id-1);
-            if (previous_zero && is_zero) checks_next = false;
-            else if (previous_one && is_one) checks_next = false;
-        }
-    }
-    UINT add = 0;
-    if (checks_next)
-    {
-        int pos = warp_id;
-        while (pos <= 31)
-        {
-            int next_zero = get_bit(zeros, pos);
-            int next_one = get_bit(ones, pos);
-            if (is_zero && next_zero) add++;
-            else if (is_one && next_one) add++;
-            else break;
-            pos++;
-        }
-        output[global_id] = get_compressed(add, is_one);
-    }
-    else
-    {
-        if (!is_zero && !is_one)output[global_id] = input[global_id]; //cant compress, writing literally
-        else output[global_id] = 0; //'null' symbol after compression
-    }
-}
-
 __global__ void ballot_warp_compress(UINT* input, UINT* output)
 {
     int global_id = blockIdx.x * blockDim.x + threadIdx.x;
@@ -228,13 +177,9 @@ __global__ void ballot_warp_merge(int input_size, UINT* input, UINT* output)
 }
 
 
-void BallotSyncWAH(UINT * input)
+UINT* BallotSyncWAH(UINT * input)
 {
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    cudaEventRecord(start);
-    int testSize = 32*(2);
+    int testSize = 32*(4000000);
     UINT* test = new UINT[testSize];
     UINT* output = new UINT[testSize];
     if (testSize <= LOGGING_MAX)
@@ -300,15 +245,12 @@ void BallotSyncWAH(UINT * input)
         }
         printf("\n");
     }
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
     float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    printf("Time passed: %fs\n", milliseconds /1000);
     cudaFree(d_test);
     cudaFree(d_output);
     delete test;
     delete output;
+    return nullptr;
 }
 
 
