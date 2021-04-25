@@ -2,6 +2,17 @@
 #include <climits>
 #include <thrust/remove.h>
 #include "bit_functions.cuh"
+#include "defines.h"
+#include "methods.h"
+
+//maximum amount of blocks we can compress in single block
+#ifndef COMPRESS_MAX
+#define COMPRESS_MAX 0x3FFFFFFF
+#endif
+//maximum input for logging
+#ifndef LOGGING_MAX
+#define LOGGING_MAX 128
+#endif
 
 struct zero
 {
@@ -12,23 +23,10 @@ struct zero
 	}
 };
 
-__global__ void cuda_hello(){
-    //printf("%d\n",blockIdx.x);
-}
-
-
-void CudaHello()
-{
-    printf("Hello extern!\n");
-    cuda_hello<<<4,4>>>(); 
-}
-
-
 __global__ void ballot_warp_compress(UINT* input, UINT* output)
 {
     int global_id = blockIdx.x * blockDim.x + threadIdx.x;
     int warp_id = global_id % 32;
-    int warp_number = global_id / 32;
 
     bool is_zero = is_zeros(input[global_id]);
     bool is_one = is_ones(input[global_id]);
@@ -74,50 +72,93 @@ __global__ void ballot_warp_compress(UINT* input, UINT* output)
     }
 }
 
-
-void BallotSyncWAH(UINT * input)
+__global__ void ballot_warp_merge(int input_size, UINT* input, UINT* output)
 {
-    int testSize = 64;
-    UINT* test = new UINT[testSize];
-    UINT* output = new UINT[testSize];
-    for (int i = 0; i < testSize; i++)
+    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (global_id >= input_size) return;
+    UINT curr = input[global_id];
+    output[global_id] = 0;
+    bool checks_next = true;
+    if (!get_bit(curr, 0)) checks_next = false;
+    else if (global_id > 0)
     {
-        int roll = rand() % 3;
-        if (roll == 0)
+        UINT prev = input[global_id - 1];
+        if (get_bit(prev, 0) && (get_bit(prev, 1) == get_bit(curr, 1)))
         {
-            test[i] = 0x7FFFFFFF; //all ones
-            printf("1");
-        }
-        if (roll == 1)
-        {
-            test[i] = 256; // not valid for compression
-            printf("x");
-        }
-        if (roll == 2)
-        {
-            test[i] = 0x00000000; // all zeros
-            printf("0");
+            checks_next = false;
         }
     }
-    printf("\n");
-    UINT * d_test;
+
+    if (checks_next)
+    {
+        UINT bit = get_bit(curr, 1);
+        int curr_output_pos = global_id;
+        int pos = global_id + 1;
+        UINT currAmount = compressed_count(curr);
+        while (pos < input_size)
+        {
+            UINT iter = input[pos];
+            if (get_bit(iter, 0) == 0) break;
+            if (get_bit(iter, 1) != bit) break;
+            UINT added = compressed_count(iter);
+            currAmount += added; 
+            pos++;
+        }
+        if (currAmount > 0)
+        {
+            output[curr_output_pos] = get_compressed(currAmount, bit);
+        }
+    }
+    else if (!get_bit(curr, 0))
+    {
+        output[global_id] = curr;
+    }
+}
+
+
+UINT* BallotSyncWAH(int data_size, UINT * d_input)
+{
+    int size = data_size;
+    UINT* output = new UINT[size];
     UINT* d_output;
-    cudaMalloc((UINT**)&d_test, sizeof(UINT) * testSize);
-    cudaMalloc((UINT**)&d_output, sizeof(UINT) * testSize);
-    cudaMemcpy(d_test, test, sizeof(UINT)*testSize, cudaMemcpyHostToDevice);
-    ballot_warp_compress<<<testSize / 32, 32>>>(d_test,d_output);
 
-    cudaMemcpy(output, d_output, sizeof(UINT) * testSize, cudaMemcpyDeviceToHost);
+    cudaMalloc((UINT**)&d_output, sizeof(UINT) * size);
+    ballot_warp_compress<<<size / 32, 32>>>(d_input,d_output);
 
-    UINT* end = thrust::remove_if(output, output + testSize, zero());
+    cudaMemcpy(output, d_output, sizeof(UINT) * size, cudaMemcpyDeviceToHost);
 
-    for (int i = 0; i < end-output; i++)
+    UINT* end = thrust::remove_if(output, output + size, zero());
+    int remove_count = end - output;
+
+    if (size <= LOGGING_MAX)
     {
-        printf("%u ", output[i]);
+        printf("Sequence after warp-compression:\n");
+        for (int i = 0; i < end - output; i++)
+        {
+            UINT c = compressed_count(output[i]);
+            if (get_bit(output[i], 0)) printf("(%u,%u) ", c, get_bit(output[i], 1));
+            else printf("x ");
+        }
+        printf("\n");
     }
-    printf("\n");
-    cudaFree(d_test);
+
+    cudaMemcpy(d_input, output, sizeof(UINT) * remove_count, cudaMemcpyHostToDevice);
+
+    ballot_warp_merge <<<(remove_count / 32)+1, 32 >> > (remove_count, d_input, d_output);
+    cudaMemcpy(output, d_output, sizeof(UINT) * size, cudaMemcpyDeviceToHost);
+    UINT* final_end = thrust::remove_if(output, output + remove_count, zero());
+    if (size <= LOGGING_MAX)
+    {
+        printf("Sequence after global-compression:\n");
+        for (int i = 0; i < final_end - output; i++)
+        {
+            UINT c = compressed_count(output[i]);
+            if (get_bit(output[i], 0)) printf("(%u,%u) ", c, get_bit(output[i], 1));
+            else printf("x ");
+        }
+        printf("\n");
+    }
+    cudaFree(d_input);
     cudaFree(d_output);
-    delete test;
-    delete output;
+    return output;
 }
