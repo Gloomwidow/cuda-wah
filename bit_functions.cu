@@ -5,13 +5,13 @@ __device__ UINT get_bit(UINT src, int i)
 	return (1 & (src >> (31 - (i))));
 }
 
-__device__ UINT fill_bit(UINT src, int i)
+__host__ __device__ UINT fill_bit(UINT src, int i)
 {
 	src |= 1UL << (31 - i);
 	return src;
 }
 
-__device__ UINT clear_bit(UINT src, int i)
+__host__ __device__ UINT clear_bit(UINT src, int i)
 {
 	src &= ~(1UL << (31 - i));
 	return src;
@@ -47,4 +47,12 @@ __device__ UINT reverse(UINT src)
 		if (temp) reverse_num |= (1 << ((NO_OF_BITS - 1) - i));
 	}
 	return reverse_num;
+}
+
+//returns amount of sequences compressed in src block
+__host__ __device__ UINT compressed_count(UINT src)
+{
+	src = clear_bit(src, 0);
+	src = clear_bit(src, 1);
+	return src;
 }
