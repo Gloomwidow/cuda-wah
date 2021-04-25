@@ -8,7 +8,7 @@
 #define FULL_WORD	1
 #define TAIL_WORD	2
 
-#define WARPS_IN_BLOCK 2
+#define WARPS_IN_BLOCK 1
 
 //__global__ void scan(float *g_odata, float *g_idata, int n)
 //{
@@ -42,12 +42,12 @@ typedef struct segment {
 	uchar1 r_end_len;
 } segment;
 
-__global__ void SharedMemKernel(UINT* input, UINT* output)
+__global__ void SharedMemKernel(UINT* input, size_t inputSize, UINT* output)
 {
 	const int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
 	const int lane_id = threadIdx.x % warpSize;
 	const int warp_id = threadIdx.x / warpSize;
-	const int warps_count = blockDim.x / warpSize;
+	const int warps_count = (inputSize % warpSize == 0) ? (inputSize / warpSize) : (inputSize / warpSize) + 1;
 
 	UINT gulp = input[thread_id];
 
@@ -64,9 +64,13 @@ __global__ void SharedMemKernel(UINT* input, UINT* output)
 
 	// is this thread the beginning of a section?
 	char prev_type = __shfl_up_sync(FULL_MASK, w_type, 1);
-	bool is_begin = (w_type == TAIL_WORD) || (w_type != prev_type);
-	if (lane_id == 0)
-		is_begin = true;
+	bool is_begin = false;
+	if (thread_id < inputSize)
+	{
+		is_begin = (w_type == TAIL_WORD) || (w_type != prev_type);
+		if (lane_id == 0)
+			is_begin = true;
+	}
 
 	unsigned warp_begins_mask = __ballot_sync(FULL_MASK, is_begin);
 
@@ -78,8 +82,8 @@ __global__ void SharedMemKernel(UINT* input, UINT* output)
 																										// note: __ffs(0) = 0
 		if (segment_len == 0)	// the last thread-beginning in warp
 		{
-			segment_len = warpSize - lane_id;
-
+			segment_len = (warp_id < warps_count - 1) ? (warpSize - lane_id) : (inputSize - thread_id);	// considers case of the last thread-beginning in the last warp in block
+																										// when inputSize is not divisible by 32
 			segments[warp_id].r_end_type = make_uchar1(w_type);
 			segments[warp_id].r_end_len = make_uchar1(segment_len);
 		}
@@ -144,6 +148,8 @@ __global__ void SharedMemKernel(UINT* input, UINT* output)
 	}
 	__syncthreads();
 
+
+
 	if (is_begin)
 	{
 		// gather
@@ -176,7 +182,7 @@ void printBits(size_t const size, void const * const ptr)
 
 void SharedMemWAH(UINT* input)//, size_t size)
 {
-	size_t size = 64;
+	size_t size = 2;
 	UINT* test = new UINT[size];
 	UINT* output = new UINT[size];
 
@@ -213,7 +219,7 @@ void SharedMemWAH(UINT* input)//, size_t size)
 	if (size % threads_per_block != 0)
 		blocks++;
 
-	SharedMemKernel<<<blocks, threads_per_block>>>(d_input, d_output);
+	SharedMemKernel<<<blocks, threads_per_block>>>(d_input, size, d_output);
 	CUDA_CHECK(cudaGetLastError(), Free);
 	CUDA_CHECK(cudaDeviceSynchronize(), Free);
 
