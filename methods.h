@@ -1,2 +1,2 @@
 #pragma once
-UINT* BallotSyncWAH(UINT* input);
+UINT* BallotSyncWAH(int data_size, UINT* input);
