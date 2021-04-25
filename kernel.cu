@@ -1,12 +1,8 @@
 #include <cstdio>
 #include <climits>
 #include <thrust/remove.h>
-#ifndef UINT
-#define UINT unsigned int
-#endif // !UINT
-#ifndef ULONG
-#define ULONG unsigned long long
-#endif // !ULONG
+#include "defines.h"
+#include "methods.h"
 
 struct zero
 {
@@ -16,10 +12,6 @@ struct zero
         return x == 0;
     }
 };
-
-__global__ void cuda_hello(){
-    //printf("%d\n",blockIdx.x);
-}
 
 //gets i-th bit in int
 __device__ UINT get_bit(UINT src,int i)
@@ -76,12 +68,6 @@ __device__ UINT reverse(UINT src)
 }
 
 
-void CudaHello()
-{
-    printf("Hello extern!\n");
-    cuda_hello<<<4,4>>>(); 
-}
-
 
 __global__ void ballot_warp_compress(UINT* input, UINT* output)
 {
@@ -134,9 +120,9 @@ __global__ void ballot_warp_compress(UINT* input, UINT* output)
 }
 
 
-void BallotSyncWAH(UINT * input)
+UINT* BallotSyncWAH(UINT * input)
 {
-    int testSize = 64;
+    int testSize = 32*1000000;
     UINT* test = new UINT[testSize];
     UINT* output = new UINT[testSize];
     for (int i = 0; i < testSize; i++)
@@ -145,20 +131,16 @@ void BallotSyncWAH(UINT * input)
         if (roll == 0)
         {
             test[i] = 0x7FFFFFFF; //all ones
-            printf("1");
         }
         if (roll == 1)
         {
             test[i] = 256; // not valid for compression
-            printf("x");
         }
         if (roll == 2)
         {
             test[i] = 0x00000000; // all zeros
-            printf("0");
         }
     }
-    printf("\n");
     UINT * d_test;
     UINT* d_output;
     cudaMalloc((UINT**)&d_test, sizeof(UINT) * testSize);
@@ -170,14 +152,10 @@ void BallotSyncWAH(UINT * input)
 
     UINT* end = thrust::remove_if(output, output + testSize, zero());
 
-    for (int i = 0; i < end-output; i++)
-    {
-        printf("%u ", output[i]);
-    }
-    printf("\n");
     cudaFree(d_test);
     cudaFree(d_output);
     delete test;
     delete output;
+    return nullptr;
 }
 
