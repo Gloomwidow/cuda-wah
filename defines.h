@@ -1,3 +1,5 @@
+// This file is safe to #define without any #ifndefs
+
 #ifndef UINT
 #define UINT unsigned int
 #endif // !UINT
@@ -24,4 +26,3 @@
 	}																								\
 }
 #endif // !CUDA_CHECK
-

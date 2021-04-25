@@ -8,10 +8,13 @@
 #include <climits>
 #include <bitset>
 #include <iostream>
+#include "defines.h"
+
+extern void SharedMemWAH(UINT* input);// , size_t size);
 
 
-int main() 
-{
+int main() {
+	  SharedMemWAH(nullptr);//, 2);
     if (UNIT_TESTING)
     {
         UnitTests(&BallotSyncWAH);

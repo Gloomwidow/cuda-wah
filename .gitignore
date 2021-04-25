@@ -2,6 +2,7 @@
 *.sln
 *.vcxproj
 *.vcxproj.user
+*.pdb
 
 # Build results
 [Dd]ebug/
