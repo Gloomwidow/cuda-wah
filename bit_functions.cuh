@@ -2,7 +2,7 @@
 #include "defines.h"
 
 //gets i-th bit in int
-__device__ UINT get_bit(UINT src, int i);
+__host__ __device__ UINT get_bit(UINT src, int i);
 
 //sets u-th bit to 1
 __host__ __device__ UINT fill_bit(UINT src, int i);

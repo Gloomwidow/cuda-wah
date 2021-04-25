@@ -1,6 +1,6 @@
 #include "bit_functions.cuh"
 
-__device__ UINT get_bit(UINT src, int i)
+__host__ __device__ UINT get_bit(UINT src, int i)
 {
 	return (1 & (src >> (31 - (i))));
 }
@@ -17,7 +17,7 @@ __host__ __device__ UINT clear_bit(UINT src, int i)
 	return src;
 }
 
-__device__ bool is_zeros(UINT src)
+ __device__ bool is_zeros(UINT src)
 {
 	return src == 0;
 }
