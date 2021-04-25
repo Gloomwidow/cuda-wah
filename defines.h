@@ -9,6 +9,10 @@
 #define FULL_MASK 0xffffffff
 #endif // !FULL_MASK
 
+#ifndef UNIT_TESTING
+#define UNIT_TESTING true
+#endif // !FULL_MASK
+
 #ifndef CUDA_CHECK
 #define CUDA_CHECK(call, label)																		\
 {																									\
