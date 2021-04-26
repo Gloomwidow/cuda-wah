@@ -15,8 +15,8 @@ extern UINT* SharedMemWAH(int data_size, UINT* input);// , size_t size);
 int main() {
     if (UNIT_TESTING)
     {
-        UnitTests(&BallotSyncWAH);
-		//UnitTests(&SharedMemWAH);
+        //UnitTests(&BallotSyncWAH);
+		UnitTests(&SharedMemWAH);
     }
     else
     {

@@ -1,4 +1,7 @@
 ﻿#include "cuda_runtime.h"
+#include "cooperative_groups.h"
+#include <thrust/scan.h>
+#include <thrust/execution_policy.h>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -8,7 +11,9 @@
 #define FULL_WORD	1
 #define TAIL_WORD	2
 
-#define WARPS_IN_BLOCK 1
+#define WARPS_IN_BLOCK 2
+
+namespace cg = cooperative_groups;
 
 //__global__ void scan(float *g_odata, float *g_idata, int n)
 //{
@@ -47,7 +52,15 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 	const int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
 	const int lane_id = threadIdx.x % warpSize;
 	const int warp_id = threadIdx.x / warpSize;
-	const int warps_count = (inputSize % warpSize == 0) ? (inputSize / warpSize) : (inputSize / warpSize) + 1;
+	int warps_count;// = (inputSize % warpSize == 0) ? (inputSize / warpSize) : (inputSize / warpSize) + 1;	// TODO: correct for when there are many blocks
+	if ((blockIdx.x + 1)*blockDim.x > inputSize)	// last block can enter here
+	{
+		warps_count = (inputSize - blockIdx.x*blockDim.x) / warpSize;
+		if (inputSize % warpSize != 0)
+			warps_count++;
+	}
+	else
+		warps_count = blockDim.x / warpSize;
 
 	UINT gulp = input[thread_id];
 
@@ -63,8 +76,8 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 		w_type = TAIL_WORD;
 
 	// is this thread the beginning of a section?
-	char prev_type = __shfl_up_sync(FULL_MASK, w_type, 1);
 	bool is_begin = false;
+	char prev_type = __shfl_up_sync(FULL_MASK, w_type, 1);
 	if (thread_id < inputSize)
 	{
 		is_begin = (w_type == TAIL_WORD) || (w_type != prev_type);
@@ -82,7 +95,8 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 																										// note: __ffs(0) = 0
 		if (segment_len == 0)	// the last thread-beginning in warp
 		{
-			segment_len = (warp_id < warps_count - 1) ? (warpSize - lane_id) : (inputSize - thread_id);	// considers case of the last thread-beginning in the last warp in block
+			segment_len = (warp_id < warps_count - 1) ? (warpSize - lane_id) : (warps_count*warpSize - thread_id);	
+																										// considers case of the last thread-beginning in the last warp in block
 																										// when inputSize is not divisible by 32
 			segments[warp_id].r_end_type = make_uchar1(w_type);
 			segments[warp_id].r_end_len = make_uchar1(segment_len);
@@ -110,6 +124,8 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 			}
 		}
 	}
+	__syncthreads();
+
 	// here every thread-beginning knows its segment's length (in-block boundaries)
 
 	// in-warp scan, taken from https://github.com/NVIDIA/cuda-samples/blob/master/Samples/shfl_scan/shfl_scan.cu
@@ -148,13 +164,98 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 	}
 	__syncthreads();
 
+	if (warp_id > 0 && is_begin)
+		value += sums[warp_id - 1];
+	// now value is correct in block boundaries
 
+
+	
+	//segment* block_segments = (segment*)output;															// this allocation is being reused
+	//// find the last thread-beginning in block
+	//warp_begins_mask = __ballot_sync(FULL_MASK, is_begin);
+	//__shared__ unsigned block_begins_masks[WARPS_IN_BLOCK];
+	//if (lane_id == 0)
+	//	block_begins_masks[warp_id] = warp_begins_mask;
+	//__syncthreads();
+
+	//if (warp_id == 0 && lane_id < warps_count)															// find last warp in block which contains any thread-beginning
+	//{
+	//	unsigned begins_mask = block_begins_masks[lane_id];
+	//	unsigned is_mask_nonzero = __ballot_sync(__activemask(), begins_mask != EMPTY_MASK);
+	//	block_begins_masks[0] = warpSize - 1 - __clz(is_mask_nonzero);									// write its warp_id in shared memory
+	//}
+	//__syncthreads();
+
+	//bool am_last_beginning = false;
+	//if (warp_id == block_begins_masks[0])		// find last thread-beginning in block
+	//{
+	//	int lane = warpSize - 1 - __clz(warp_begins_mask);	// lane_id of the this thread
+	//	if (lane_id == lane)
+	//	{
+	//		am_last_beginning = true;
+
+	//		block_segments[blockIdx.x].r_end_type = make_uchar1(w_type);
+	//		block_segments[blockIdx.x].r_end_len = make_uchar1(segment_len);
+	//	}
+	//}
+	//if (threadIdx.x == 0)						// first thread-beginning in block
+	//{
+	//	block_segments[blockIdx.x].l_end_type = make_uchar1(w_type);
+	//	block_segments[blockIdx.x].l_end_len = make_uchar1(segment_len);
+	//}
+	//cg::grid_group grid = cg::this_grid();
+	//grid.sync();
+	////cg::sync(cg::this_grid());
+
+	//if (blockIdx.x > 0 && threadIdx.x == 0 && block_segments[blockIdx.x - 1].r_end_type.x == w_type)	// check if the first thread-beginning in block is really
+	//	is_begin = false;																				// thread-beginning in the context of the grid...
+
+	//if (am_last_beginning)																				// ...if not, the last thread-beginning form prev. block should add sth to its `segment_len`
+	//{
+	//	for (int i = blockIdx.x + 1; i < gridDim.x && block_segments[i].l_end_type.x == w_type; i++)
+	//	{
+	//		segment_len += block_segments[i].l_end_len.x;		// check types
+	//		if (segments[i].l_end_len.x != blockDim.x)
+	//			break;
+	//	}
+	//}
+
+	//// INTER-BLOCK SCAN
+	////__shared__ int sums[WARPS_IN_BLOCK];
+	//UINT* block_sums = output;
+	////if (threadIdx.x == blockDim.x - 1)
+	//if (am_last_beginning)
+	//{
+	//	printf("block %d has value: %d\n", blockIdx.x, value);
+	//	block_sums[blockIdx.x] = value;
+	//}
+	//grid.sync();
+
+	//thrust::inclusive_scan(thrust::device, block_sums, block_sums + gridDim.x, block_sums);
+	//__syncthreads();
+
+	// the same shfl scan operation, but performed on block sums
+	/// this can be safely done by a single warp
+	//if (warp_id == 0 && lane_id < warps_count)
+	//{
+	//	int warp_sum = sums[lane_id];
+
+	//	int mask = (1 << warps_count) - 1;
+	//	for (int i = 1; i <= warps_count; i *= 2)
+	//	{
+	//		int n = __shfl_up_sync(mask, warp_sum, i, warps_count);
+	//		if (lane_id >= i)
+	//			warp_sum += n;
+	//	}
+	//	sums[lane_id] = warp_sum;
+	//}
+	//__syncthreads();
 
 	if (is_begin)
 	{
 		// gather
-		if (warp_id > 0)
-			value += sums[warp_id - 1];
+		//if (warp_id > 0)
+		//	value += sums[warp_id - 1];
 
 		if (w_type == EMPTY_WORD)
 			output[value - 1] = get_compressed(segment_len, 0);
@@ -180,8 +281,26 @@ void printBits(size_t const size, void const * const ptr)
 	puts("");
 }
 
+void ensure_cooperativity_support()
+{
+	cudaDeviceProp deviceProp = { 0 };
+
+	int device;
+	CUDA_CHECK(cudaGetDevice(&device), Finish);
+
+	CUDA_CHECK(cudaGetDeviceProperties(&deviceProp, device), Finish);
+	if (!deviceProp.cooperativeLaunch)
+	{
+		printf("\nSelected GPU (%d) does not support Cooperative Kernel Launch, Waiving the run\n", device);
+		exit(EXIT_FAILURE);
+	}
+Finish:
+}
+
 UINT* SharedMemWAH(int size, UINT* input)//, size_t size)
 {
+	ensure_cooperativity_support();
+
 	UINT* result = nullptr;
 
 	UINT* d_input;
@@ -203,6 +322,15 @@ UINT* SharedMemWAH(int size, UINT* input)//, size_t size)
 	UINT* output = new UINT[size];
 	CUDA_CHECK(cudaMemcpy(output, d_output, size * sizeof(UINT), cudaMemcpyDeviceToHost), Free);
 	result = output;
+
+	printf("Sequence after global-compression:\n");
+	for (int i = 0; i < size; i++)
+	{
+		UINT c = compressed_count(output[i]);
+		if (get_bit(output[i], 0)) printf("(%u,%u) ", c, get_bit(output[i], 1));
+		else printf("x ");
+	}
+	printf("\n");
 
 Free:
 	CUDA_CHECK(cudaFree(d_output), FreeInput);

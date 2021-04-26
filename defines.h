@@ -11,6 +11,10 @@
 #define FULL_MASK 0xffffffff
 #endif // !FULL_MASK
 
+#ifndef EMPTY_MASK
+#define EMPTY_MASK 0x00000000
+#endif // !EMPTY_MASK
+
 #ifndef UNIT_TESTING
 #define UNIT_TESTING true
 #endif // !FULL_MASK
