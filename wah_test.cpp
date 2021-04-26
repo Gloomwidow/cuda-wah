@@ -5,7 +5,7 @@
 
 UINT* CpuWAH(UINT* data)
 {
-
+	return nullptr;
 }
 
 void Test(UINT* (*tested_function)(int,UINT*),int data_size, UINT* data, int expected_size, UINT* expected, std::string test_name)
