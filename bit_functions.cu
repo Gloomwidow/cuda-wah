@@ -17,6 +17,7 @@ __host__ __device__ UINT clear_bit(UINT src, int i)
 	return src;
 }
 
+
 __host__ __device__ bool is_zeros(UINT src)
 {
 	return src == 0;

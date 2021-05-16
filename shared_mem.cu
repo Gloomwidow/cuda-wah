@@ -182,7 +182,7 @@ void printBits(size_t const size, void const * const ptr)
 
 void SharedMemWAH(UINT* input)//, size_t size)
 {
-	size_t size = 2;
+	size_t size = 32;
 	UINT* test = new UINT[size];
 	UINT* output = new UINT[size];
 
