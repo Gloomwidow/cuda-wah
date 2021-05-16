@@ -7,6 +7,11 @@
 #define ULONG unsigned long long
 #endif // !ULONG
 
+//maximum amount of blocks we can compress in single block
+#ifndef COMPRESS_MAX
+#define COMPRESS_MAX 0x3FFFFFFF
+#endif
+
 #ifndef FULL_MASK
 #define FULL_MASK 0xffffffff
 #endif // !FULL_MASK
