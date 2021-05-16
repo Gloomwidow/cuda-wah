@@ -14,14 +14,15 @@ extern void SharedMemWAH(UINT* input);// , size_t size);
 
 
 int main() {
-	  SharedMemWAH(nullptr);//, 2);
+	SharedMemWAH(nullptr);//, 2);
     if (UNIT_TESTING)
     {
         UnitTests(&BallotSyncWAH);
+        UnitTests(&AtomicAddWAH);
     }
     else
     {
-        UINT size = 32 * 20000000;
+        UINT size = 32 * 2;
         printf("Generating tests...\n");
         UINT* data = new UINT[size];
         for (int i = 0; i < size; i++)

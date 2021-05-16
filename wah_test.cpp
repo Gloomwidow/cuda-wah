@@ -1,11 +1,81 @@
 #include "wah_test.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
+#include "bit_functions.cuh"
+#include "defines.h"
+#include <vector>
 #define MISMATCH_MAX 20
 
-UINT* CpuWAH(UINT* data)
-{
+int last_wah_count = 0;
 
+UINT* CpuWAH(int data_size,UINT* data)
+{
+	std::vector<UINT> result;
+	int which = -1;
+	int sum = 0;
+	for (int i = 0; i < data_size; i++)
+	{
+		if (sum == COMPRESS_MAX)
+		{
+			result.push_back(get_compressed(sum, which));
+			sum = 0;
+			which = -1;
+		}
+		bool zeros = is_zeros(data[i]);
+		bool ones = is_ones(data[i]);
+		if (!ones && !zeros)
+		{
+			if (sum > 0)
+			{
+				result.push_back(get_compressed(sum, which));
+				sum = 0;
+				which = -1;
+			}
+			result.push_back(data[i]);
+		}
+		else if (zeros)
+		{
+			if (which == -1)
+			{
+				sum = 1;
+				which = 0;
+			}
+			else if (which == 1)
+			{
+				result.push_back(get_compressed(sum, which));
+				sum = 1;
+				which = 0;
+			}
+			else sum++;
+		}
+		else
+		{
+			if (which == -1)
+			{
+				sum = 1;
+				which = 1;
+			}
+			else if (which == 0)
+			{
+				result.push_back(get_compressed(sum, which));
+				sum = 1;
+				which = 1;
+			}
+			else sum++;
+		}
+	}
+	if (sum > 0)
+	{
+		result.push_back(get_compressed(sum, which));
+	}
+	UINT* ret = new UINT[result.size()];
+	for (int i = 0; i < result.size(); i++)
+	{
+		ret[i] = result[i];
+	}
+	last_wah_count = result.size();
+	result.clear();
+	return ret;
 }
 
 void Test(UINT* (*tested_function)(int,UINT*),int data_size, UINT* data, int expected_size, UINT* expected, std::string test_name)
@@ -111,9 +181,145 @@ void AllCompressTest(UINT* (*tested_function)(int, UINT*))
 	delete[] result;
 }
 
+void BetweenWarpsMerge(UINT* (*tested_function)(int, UINT*))
+{
+	int size = 64;
+	UINT* table = new UINT[size];
+	for (int i = 0; i < 34; i++)
+	{
+		table[i] = 0;
+	}
+	for (int i = 35; i < size; i++)
+	{
+		table[i] = 0x7FFFFFFF;
+	}
+	UINT* result = new UINT[2];
+	result[0] = get_compressed(35,0);
+	result[1] = get_compressed(29,1);
+	Test(tested_function, size, table, 2, result, "Merge Between Warps Test");
+	delete[] table;
+	delete[] result;
+}
+
+void MixedCompressions(UINT* (*tested_function)(int, UINT*))
+{
+	int size = 64;
+	UINT* table = new UINT[size];
+	for (int i = 0; i < size; i++)
+	{
+		if(i%8<=3) table[i] = 0;
+		else table[i] = 0x7FFFFFFF;
+	}
+	UINT* result = new UINT[16];
+	for (int i = 0; i < 16; i++)
+	{
+		result[i] = get_compressed(4, i%2);
+	}
+	Test(tested_function, size, table, 16, result, "Mixed Compressions Test");
+	delete[] table;
+	delete[] result;
+}
+
+void MixedCompressionWithLiterals(UINT* (*tested_function)(int, UINT*))
+{
+	int size = 32;
+	UINT* table = new UINT[size];
+	for (int i = 0; i < size; i++)
+	{
+		table[i] = 128;
+	}
+	table[13] = 0;
+	table[14] = 0;
+	table[15] = 0;
+	table[16] = 0;
+	
+	table[22] = 0x7FFFFFFF;
+	table[23] = 0x7FFFFFFF;
+
+	table[29] = 0x7FFFFFFF;
+	UINT* result = new UINT[28];
+	for (int i = 0; i < 28; i++)
+	{
+		result[i] = 128;
+	}
+	result[13] = get_compressed(4, 0);
+	result[19] = get_compressed(2, 1);
+	result[25] = get_compressed(1, 1);
+	Test(tested_function, size, table, 28, result, "Mixed Compress with Literals");
+	delete[] table;
+	delete[] result;
+}
+
+void AllVariants_1(UINT* (*tested_function)(int, UINT*))
+{
+	int size = 64;
+	UINT* table = new UINT[size];
+	for (int i = 0; i < size; i++)
+	{
+		table[i] = 128;
+	}
+	for (int i = 29; i < 34; i++)
+	{
+		table[i] = 0;
+	}
+	for (int i = 13; i < 15; i++)
+	{
+		table[i] = 0x7FFFFFFF;
+	}
+	for (int i = 16; i < 18; i++)
+	{
+		table[i] = 0;
+	}
+	table[19] = 0x7FFFFFFF;
+	for (int i = 0; i < 6; i++)
+	{
+		table[i] = 0x7FFFFFFF;
+	}
+	for (int i = 49; i < 56; i++)
+	{
+		table[i] = 0x7FFFFFFF;
+	}
+	for (int i = 61; i < 64; i++)
+	{
+		table[i] = 0;
+	}
+	table[37] = 0;
+	
+	UINT* result = CpuWAH(size, table);
+	int test_result_size = last_wah_count;
+	Test(tested_function, size, table, test_result_size, result, "Mixed Compress 1 (Every Scenario)");
+	delete[] table;
+	delete[] result;
+}
+
+void MultipleWarpsMerge(UINT* (*tested_function)(int, UINT*))
+{
+	int size = 32*10;
+	UINT* table = new UINT[size];
+	for (int i = 0; i < size; i++)
+	{
+		table[i] = 0;
+	}
+	table[37] = 352;
+	table[134] = 123;
+	table[256] = 5453;
+
+	UINT* result = CpuWAH(size, table);
+	int test_result_size = last_wah_count;
+	Test(tested_function, size, table, test_result_size, result, "Multiple Warps Merge");
+	delete[] table;
+	delete[] result;
+}
+
 void UnitTests(UINT* (*tested_function)(int, UINT*))
 {
-	printf("Preforming unit tests...\n");
+	printf("Performing unit tests...\n");
 	NoCompressTest(tested_function);
 	AllCompressTest(tested_function);
+	BetweenWarpsMerge(tested_function);
+	MixedCompressions(tested_function);
+	MixedCompressionWithLiterals(tested_function);
+	AllVariants_1(tested_function);
+	MultipleWarpsMerge(tested_function);
+	printf("\n\n");
 }
