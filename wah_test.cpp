@@ -4,6 +4,8 @@
 #include "bit_functions.cuh"
 #include "defines.h"
 #include <vector>
+#include <fstream>
+#include <string>
 #define MISMATCH_MAX 20
 
 int last_wah_count = 0;
@@ -122,8 +124,9 @@ void Benchmark(UINT* (*benchmark_function)(int,UINT*), int data_size, UINT* d_da
 {
 	int size = data_size;
 
+	std::ofstream log("results_"+std::to_string(GPU_THREADS_COUNT)+".csv", std::ios_base::app | std::ios_base::out);
+	//printf("BENCHMARK '%s' - Input Size: %u \n", bench_name.c_str(), size);
 
-	printf("BENCHMARK '%s' - Input Size: %u \n", bench_name.c_str(), size);
 	cudaEvent_t start, stop;
 	float max = -1;
 	float mean = 0;
@@ -133,9 +136,9 @@ void Benchmark(UINT* (*benchmark_function)(int,UINT*), int data_size, UINT* d_da
 		cudaEventCreate(&start);
 		cudaEventCreate(&stop);
 		cudaEventRecord(start);
-		if(size<=64) printf("=======================================================\n");
+		//if(size<=64) printf("=======================================================\n");
 		UINT * result = benchmark_function(size,d_data);
-		if(size<=64) printf("=======================================================\n");
+		//if(size<=64) printf("=======================================================\n");
 		cudaEventRecord(stop);
 		cudaEventSynchronize(stop);
 		float exec_time = 0;
@@ -144,12 +147,21 @@ void Benchmark(UINT* (*benchmark_function)(int,UINT*), int data_size, UINT* d_da
 		cudaEventDestroy(stop);
 		exec_time /= 1000;
 		if(print_times) printf("RUN %d: %f\n", i+1 , exec_time );
+		std::string resultRow;
+		resultRow += bench_name;
+		resultRow += ";";
+		resultRow += std::to_string(data_size*32);
+		resultRow += ";";
+		resultRow += std::to_string(exec_time);
+		resultRow += ";";
+		log << resultRow << std::endl;
 		if (max < exec_time) max = exec_time;
 		if (i == 0 || min > exec_time) min = exec_time;
 		mean += exec_time;
 		delete[] result;
 	}
-	printf("MIN: %fs | MEAN: %fs | MAX: %fs \n", min, mean / repeats, max);
+	log.close();
+	//printf("MIN: %fs | MEAN: %fs | MAX: %fs \n", min, mean / repeats, max);
 }
 
 
