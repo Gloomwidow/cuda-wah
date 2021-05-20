@@ -1,4 +1,5 @@
 #include "bit_functions.cuh"
+#include <cstdio>
 
 __host__ __device__ UINT get_bit(UINT src, int i)
 {
@@ -56,4 +57,19 @@ __host__ __device__ UINT compressed_count(UINT src)
 	src = clear_bit(src, 0);
 	src = clear_bit(src, 1);
 	return src;
+}
+
+void printBits(size_t const size, void const * const ptr)
+{
+	unsigned char *b = (unsigned char*)ptr;
+	unsigned char byte;
+	int i, j;
+
+	for (i = size - 1; i >= 0; i--) {
+		for (j = 7; j >= 0; j--) {
+			byte = (b[i] >> j) & 1;
+			printf("%u", byte);
+		}
+	}
+	puts("");
 }

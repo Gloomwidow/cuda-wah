@@ -26,3 +26,5 @@ __host__ __device__ UINT reverse(UINT src);
 
 //returns amount of sequences compressed in src block
 __host__ __device__ UINT compressed_count(UINT src);
+
+void printBits(size_t const size, void const * const ptr);

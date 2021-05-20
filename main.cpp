@@ -14,6 +14,7 @@
 #include "defines.h"
 #include "bit_functions.cuh"
 
+
 extern void SharedMemWAH(UINT* input);// , size_t size);
 void CharTextBenchmark();
 typedef std::chrono::high_resolution_clock Time;
@@ -133,6 +134,7 @@ void CharTextBenchmark()
     if (curr_batch_size < batch_char_size && curr_batch_size>0)
     {
         while (curr_batch_size < batch_char_size)
+
         {
             char c = 0;
             for (int i = 7; i >= 0; i--)

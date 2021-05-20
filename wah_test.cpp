@@ -168,7 +168,7 @@ void Benchmark(UINT* (*benchmark_function)(int,UINT*), int data_size, UINT* d_da
 
 void NoCompressTest(UINT* (*tested_function)(int, UINT*))
 {
-	int size = 32;
+	int size = 64;
 	UINT* table = new UINT[size];
 	for (int i = 0; i < size; i++)
 	{
