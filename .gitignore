@@ -21,3 +21,6 @@ bld/
 [Ll]ogs/
 bin/
 obj/
+/data/random.txt
+/data
+/results
