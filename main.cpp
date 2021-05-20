@@ -20,7 +20,7 @@ int main() {
     }
     else
     {
-        UINT size = 32;
+        UINT size = 1024;
         printf("Generating tests...\n");
         UINT* data = new UINT[size];
         for (int i = 0; i < size; i++)
