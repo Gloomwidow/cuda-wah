@@ -15,7 +15,6 @@
 #include "bit_functions.cuh"
 
 
-extern void SharedMemWAH(UINT* input);// , size_t size);
 void CharTextBenchmark();
 typedef std::chrono::high_resolution_clock Time;
 typedef std::chrono::duration<float> fsec;
@@ -26,8 +25,9 @@ int main() {
    
     if (UNIT_TESTING)
     {
-        UnitTests(&BallotSyncWAH);
-        UnitTests(&AtomicAddWAH);
+        //UnitTests(&BallotSyncWAH);
+        //UnitTests(&AtomicAddWAH);
+		UnitTests(&SharedMemWAH);
     }
     else
     {
@@ -65,7 +65,7 @@ void CharTextBenchmark()
     
     //printf("%lld\n", file_size);
 
-    long int batch_char_size = 50000000;
+    long int batch_char_size = 5000;
     
 
 

@@ -21,7 +21,7 @@
 #endif // !EMPTY_MASK
 
 #ifndef UNIT_TESTING
-#define UNIT_TESTING false
+#define UNIT_TESTING true
 #endif // !FULL_MASK
 
 //amount of threads in blocks
