@@ -30,6 +30,7 @@
 #endif // !FULL_MASK
 
 
+
 #ifndef CUDA_CHECK
 #define CUDA_CHECK(call, label)																		\
 {																									\

@@ -1,23 +1,25 @@
 #include <cstdio>
 #include <climits>
 #include <thrust/remove.h>
+#include <thrust/device_ptr.h>
+#include <thrust/execution_policy.h>
 #include "bit_functions.cuh"
 #include "defines.h"
 #include "methods.h"
 
+
+struct zero
+{
+    __host__ __device__
+        bool operator()(const int x)
+    {
+        return x == 0;
+    }
+};
 //maximum input for logging
 #ifndef LOGGING_MAX
 #define LOGGING_MAX 0
 #endif
-
-struct zero
-{
-	__host__ __device__
-		bool operator()(const int x)
-	{
-		return x == 0;
-	}
-};
 
 __global__ void ballot_warp_compress(UINT* input, UINT* output)
 {
@@ -70,7 +72,7 @@ __global__ void ballot_warp_compress(UINT* input, UINT* output)
 
 __global__ void warm_up() 
 {
-
+    int i = threadIdx.x;
 }
 
 __global__ void single_ballot_warp_compress(UINT* input, UINT* output)
@@ -145,7 +147,9 @@ __global__ void single_ballot_warp_compress(UINT* input, UINT* output)
         {
             output[global_id + write_pos] = get_compressed(sum, which);
         }
+       
     }
+  
 }
 
 __global__ void ballot_warp_merge(int input_size, UINT* input, UINT* output)
@@ -274,14 +278,14 @@ __global__ void atomic_sum_warp_write(int input_size, UINT* input, UINT* output)
 }
 
 
-UINT* BallotSyncWAH(int data_size, UINT * d_input)
+UINT* BallotSyncWAH(int data_size, UINT* d_input)
 {
     int size = data_size;
     UINT* output = new UINT[size];
     UINT* d_output;
 
     cudaMalloc((UINT**)&d_output, sizeof(UINT) * size);
-    ballot_warp_compress<<<(size / GPU_THREADS_COUNT)+1, GPU_THREADS_COUNT>>>(d_input,d_output);
+    ballot_warp_compress << <(size / GPU_THREADS_COUNT) + 1, GPU_THREADS_COUNT >> > (d_input, d_output);
 
     cudaMemcpy(output, d_output, sizeof(UINT) * size, cudaMemcpyDeviceToHost);
 
@@ -302,7 +306,7 @@ UINT* BallotSyncWAH(int data_size, UINT * d_input)
 
     cudaMemcpy(d_input, output, sizeof(UINT) * remove_count, cudaMemcpyHostToDevice);
 
-    ballot_warp_merge <<<(remove_count / GPU_THREADS_COUNT)+1, GPU_THREADS_COUNT >> > (remove_count, d_input, d_output);
+    ballot_warp_merge << <(remove_count / GPU_THREADS_COUNT) + 1, GPU_THREADS_COUNT >> > (remove_count, d_input, d_output);
     cudaMemcpy(output, d_output, sizeof(UINT) * size, cudaMemcpyDeviceToHost);
     UINT* final_end = thrust::remove_if(output, output + remove_count, zero());
     if (size <= LOGGING_MAX)
@@ -321,6 +325,31 @@ UINT* BallotSyncWAH(int data_size, UINT * d_input)
     return output;
 }
 
+UINT* OptimizedBallotSyncWAH(int data_size, UINT * d_input)
+{
+    int size = data_size;
+    UINT* output = new UINT[size];
+    UINT* d_output;
+
+    cudaMalloc((UINT**)&d_output, sizeof(UINT) * size);
+    ballot_warp_compress<<<(size / GPU_THREADS_COUNT)+1, GPU_THREADS_COUNT>>>(d_input,d_output);
+
+    UINT* end = thrust::remove_if(thrust::device, d_output, d_output + size, zero());
+    
+    int remove_count = end - d_output;
+
+    ballot_warp_merge <<<(remove_count / GPU_THREADS_COUNT)+1, GPU_THREADS_COUNT >> > (remove_count, d_output, d_input);
+    
+    UINT* final_end = thrust::remove_if(thrust::device, d_input, d_input + remove_count, zero());
+    int final_count = final_end - d_input;
+
+    cudaMemcpy(output, d_input, sizeof(UINT) * final_count, cudaMemcpyDeviceToHost);
+
+    cudaFree(d_input);
+    cudaFree(d_output);
+    return output;
+}
+
 UINT* AtomicAddWAH(int data_size, UINT* d_input)
 {
     int size = data_size;
@@ -330,10 +359,9 @@ UINT* AtomicAddWAH(int data_size, UINT* d_input)
     cudaMalloc((UINT**)&d_output, sizeof(UINT) * size);
     single_ballot_warp_compress << <size / 32, 32 >> > (d_input, d_output);
 
-    cudaMemcpy(output, d_output, sizeof(UINT) * size, cudaMemcpyDeviceToHost);
-
     if (size <= LOGGING_MAX)
     {
+        cudaMemcpy(output, d_output, sizeof(UINT) * size, cudaMemcpyDeviceToHost);
         printf("Sequence after warp-compression:\n");
         for (int i = 0; i < size; i++)
         {
@@ -342,14 +370,49 @@ UINT* AtomicAddWAH(int data_size, UINT* d_input)
             else printf("x ");
         }
         printf("\n");
+        cudaMemcpy(d_input, output, sizeof(UINT) * size, cudaMemcpyHostToDevice);
     }
-
-    cudaMemcpy(d_input, output, sizeof(UINT) * size, cudaMemcpyHostToDevice);
+    else
+    {
+        cudaMemcpy(d_input, d_output, sizeof(UINT) * size, cudaMemcpyDeviceToDevice);
+    }
 
     atomic_sum_warp_merge << <(size / 32) + 1, 32 >> > (size, d_input, d_output);
     atomic_sum_warp_write << <(size / 32) + 1, 32 >> > (size, d_input, d_output);
     cudaMemcpy(output, d_output, sizeof(UINT) * size, cudaMemcpyDeviceToHost);
     UINT* final_end = thrust::remove_if(output, output + size, zero());
+    if (size <= LOGGING_MAX)
+    {
+        printf("Sequence after global-compression:\n");
+        for (int i = 0; i < final_end - output; i++)
+        {
+            UINT c = compressed_count(output[i]);
+            if (get_bit(output[i], 0)) printf("(%u,%u) ", c, get_bit(output[i], 1));
+            else printf("x ");
+        }
+        printf("\n");
+    }
+    cudaFree(d_input);
+    cudaFree(d_output);
+    return output;
+}
+
+UINT* OptimizedAtomicAddWAH(int data_size, UINT* d_input)
+{
+    int size = data_size;
+    UINT* output = new UINT[size];
+    UINT* d_output;
+
+    cudaMalloc((UINT**)&d_output, sizeof(UINT) * size);
+    single_ballot_warp_compress << <size / 32, 32 >> > (d_input, d_output);
+
+    cudaMemcpy(d_input, d_output, sizeof(UINT) * size, cudaMemcpyDeviceToDevice);
+
+    atomic_sum_warp_merge << <(size / 32) + 1, 32 >> > (size, d_input, d_output);
+    atomic_sum_warp_write << <(size / 32) + 1, 32 >> > (size, d_input, d_output);
+    
+    UINT* final_end = thrust::remove_if(thrust::device, d_output, d_output + size, zero());
+    cudaMemcpy(output, d_output, sizeof(UINT) * size, cudaMemcpyDeviceToHost);
     if (size <= LOGGING_MAX)
     {
         printf("Sequence after global-compression:\n");
