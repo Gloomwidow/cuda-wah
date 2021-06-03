@@ -15,7 +15,6 @@
 #include "bit_functions.cuh"
 
 
-extern void SharedMemWAH(UINT* input);// , size_t size);
 void CharTextBenchmark();
 typedef std::chrono::high_resolution_clock Time;
 typedef std::chrono::duration<float> fsec;
@@ -46,6 +45,7 @@ void RunWithBatch(int batch_reserve, int batch_pos, int batch_size, std::string 
     cudaMemcpy(d_data, data, sizeof(UINT) * batch_reserve, cudaMemcpyHostToDevice);
     Benchmark(&BallotSyncWAH, batch_reserve, d_data, 1, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve*32) + ";" + "remove_if;"+std::to_string(GPU_THREADS_COUNT)+";" + std::to_string(batch_size) + ";", false);
     Benchmark(&AtomicAddWAH, batch_reserve, d_data, 1, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve*32) + ";" +  "atomicAdd;"+std::to_string(GPU_THREADS_COUNT)+";" + std::to_string(batch_size) + ";", false);
+    //Benchmark(&SharedMemWAH, batch_reserve, d_data, 1, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "sharedMem;" + std::to_string(1024) + ";" + std::to_string(batch_size) + ";", false);
     cudaFree(d_data);
 }
 
@@ -65,7 +65,7 @@ void CharTextBenchmark()
     
     //printf("%lld\n", file_size);
 
-    long int batch_char_size = 50000000;
+    long int batch_char_size = 25000000;
     
 
 
