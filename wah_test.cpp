@@ -106,7 +106,7 @@ void Test(UINT* (*tested_function)(int,UINT*),int data_size, UINT* data, int exp
 			mismatches++;
 			if (mismatches<=MISMATCH_MAX)
 			{
-				printf("Tables' values mismatch on position %d!\n");
+				printf("Tables' values mismatch on position %d!\n", i);
 				printf("\tExpected: "); printBits(sizeof(UINT), &expected[i]);
 				printf("\tActual:   "); printBits(sizeof(UINT), &actual[i]);
 			}

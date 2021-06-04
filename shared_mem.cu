@@ -107,7 +107,7 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 		if (segment_len == 0)	// the last thread-beginning in warp
 		{
 			am_last_beginning_inwarp = true;
-			segment_len = (warp_id < warps_count - 1) ? (warpSize - lane_id) : (warps_count*warpSize - thread_id);
+			segment_len = (warp_id < warps_count - 1) ? (warpSize - lane_id) : (warps_count*warpSize - threadIdx.x);
 																										// considers case of the last thread-beginning in the last warp in block
 																										// when inputSize is not divisible by 32
 			segments[warp_id].r_end_type = make_uchar1(w_type);
@@ -183,7 +183,7 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 	}
 	__syncthreads();
 
-	if (warp_id > 0 && is_begin)
+	if (warp_id > 0)
 		index += sums[warp_id - 1];
 	// now index is correct in block boundaries
 
@@ -228,40 +228,67 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 	cg::grid_group grid = cg::this_grid();
 	grid.sync();
 
+	__shared__ bool decrement_index;
+	if (threadIdx.x == 0)
+		decrement_index = false;
 	if (is_begin)
 	{
-		if (blockIdx.x > 0 && threadIdx.x == 0 && w_type != TAIL_WORD &&									// check if the first thread-beginning in block is really
-			block_segments[blockIdx.x - 1].r_end_type.x == w_type)											// thread-beginning in the context of the grid...
+		if (blockIdx.x > 0 && threadIdx.x == 0 && w_type != TAIL_WORD &&								// check if the first thread-beginning in block is really
+			block_segments[blockIdx.x - 1].r_end_type.x == w_type)										// thread-beginning in the context of the grid...
 		{
 			is_begin = false;
 			am_last_beginning_inblock = false;
+			decrement_index = true;
 		}
 
-		if (am_last_beginning_inblock)																		// ...if not, the last thread-beginning form prev. block should add sth to its `segment_len`
+		if (am_last_beginning_inblock)																	// ...if not, the last thread-beginning form prev. block should add sth to its `segment_len`
 		{
 			for (int i = blockIdx.x + 1; i < gridDim.x && block_segments[i].l_end_type.x == w_type; i++)
 			{
+				int tmp = segment_len;
 				segment_len += block_segments[i].l_end_len.x;		// check types
-				if (segments[i].l_end_len.x != blockDim.x)
+				if (block_segments[i].l_end_len.x != blockDim.x)
 					break;
 			}
 		}
 	}
+	__syncthreads();
+	if (decrement_index)
+		index--;
+	grid.sync();
 
 	// INTER-BLOCKS SCAN
 	//__shared__ int sums[WARPS_IN_BLOCK];
 	UINT* block_sums = output;
 	//if (threadIdx.x == blockDim.x - 1)
+	int writing_thread_id;
+	__shared__ bool has_last_beginning;
+	if (threadIdx.x == 0)
+		has_last_beginning = false;
+	__syncthreads();
 	if (am_last_beginning_inblock)
 	{
-		//printf("block %d has value: %d\n", blockIdx.x, value);
+		has_last_beginning = true;
+		//printf("block %d has value: %d\n", blockIdx.x, index);
 		block_sums[blockIdx.x] = index;
+		//printf("thread_id: %d, block_sum: %d, blockIdx.x: %d\n", thread_id, block_sums[blockIdx.x], blockIdx.x);
+	}
+	__syncthreads();
+	if (!has_last_beginning)
+	{
+		if (threadIdx.x == warps_count * warpSize - 1)
+		{
+			block_sums[blockIdx.x] = index;
+			//printf("thread_id: %d, block_sum: %d, blockIdx.x: %d\n", thread_id, block_sums[blockIdx.x], blockIdx.x);
+		}
 	}
 	grid.sync();
 
 	int block_sum = 0;
 	if (thread_id < gridDim.x)
+	{
 		block_sum = block_sums[thread_id];
+	}
 	__shared__ UINT partial_sums[2048];	//TODO: change
 	grid.sync();
 	if (thread_id < gridDim.x)		// maximum is 65535 = 2^16 - 1 threads
@@ -285,14 +312,14 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 		}
 	}
 	__syncthreads();
+	__shared__ UINT partial_sums2[64];
+	int partial_sums_len = gridDim.x / warpSize;
+	if (gridDim.x % warpSize != 0)
+		partial_sums_len++;
 	if (thread_id < gridDim.x)
 	{
 		if (gridDim.x > warpSize)
 		{
-			int partial_sums_len = gridDim.x / warpSize;
-			if (gridDim.x % warpSize != 0)
-				partial_sums_len++;
-
 			if (thread_id < partial_sums_len)			// there is maximum 2048 = 2^11 `partial_sums` values
 			{
 				int partial_sum = partial_sums[thread_id];
@@ -306,7 +333,6 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 						partial_sum += n;
 				}
 				// last thread in warp writes its partial sum to memory (another space in shared memory)
-				__shared__ UINT partial_sums2[64];
 				if (partial_sums_len > warpSize)
 				{
 					int lane = warpSize - 1 - __clz(__activemask());
@@ -319,48 +345,119 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 		}
 	}
 	__syncthreads();
-	if (thread_id < gridDim.x)
+	__shared__ UINT partial_sums3[2];
+	int partial_sums2_len = partial_sums_len / warpSize;
+	if (partial_sums_len % warpSize != 0)
+		partial_sums2_len++;
+	if (gridDim.x > warpSize && thread_id < partial_sums_len)		// there is maximum 64 = 2^6 `partial_sums2` values
 	{
-		if (gridDim.x > warpSize)
-		{
+		int partial_sum2 = partial_sums2[thread_id];
 
+		// in-warp scan
+		for (int i = 0; i < warpSize; i *= 2)
+		{
+			int n = __shfl_up_sync(FULL_MASK, partial_sum2, i);
+
+			if (lane_id >= i)
+				partial_sum2 += n;
+		}
+		// last thread in warp writes its partial sum to memory (yet another space in shared memory)
+		if (partial_sums2_len > warpSize)
+		{
+			int lane = warpSize - 1 - __clz(__activemask());
+			if (lane_id == lane)
+			{
+				partial_sums3[warp_id] = partial_sum2;
+			}
 		}
 	}
-
-	//thrust::inclusive_scan(thrust::device, block_sums, block_sums + gridDim.x, block_sums);
-	//grid.sync();
-
-
-
-	// the same shfl scan operation, but performed on block sums
-	//// this can be safely done by a single warp
-	//if (warp_id == 0 && lane_id < warps_count)
-	//{
-	//	int warp_sum = sums[lane_id];
-
-	//	int mask = (1 << warps_count) - 1;
-	//	for (int i = 1; i <= warps_count; i *= 2)
-	//	{
-	//		int n = __shfl_up_sync(mask, warp_sum, i, warps_count);
-	//		if (lane_id >= i)
-	//			warp_sum += n;
-	//	}
-	//	sums[lane_id] = warp_sum;
-	//}
+	__syncthreads();
+	int partial_sums3_len = partial_sums2_len / warpSize;
+	if (partial_sums3_len % warpSize != 0)
+		partial_sums3_len++;
+	if (partial_sums3_len > 1)
+	{
+		if (thread_id == 0)
+		{
+			partial_sums3[1] += partial_sums3[0];
+		}
+	}
+	__syncthreads();
+	if (partial_sums2_len > warpSize)
+	{
+		if (thread_id < partial_sums2_len)
+		{
+			int ind = thread_id / warpSize;
+			if (ind > 0)
+				partial_sums2[thread_id] += partial_sums3[ind - 1];
+		}
+	}
+	__syncthreads();
+	if (partial_sums_len > warpSize)
+	{
+		if (thread_id < partial_sums_len)
+		{
+			int ind = thread_id / warpSize;
+			if (ind > 0)
+				partial_sums[thread_id] += partial_sums2[ind - 1];
+		}
+	}
+	__syncthreads();
+	if (gridDim.x > warpSize)
+	{
+		if (thread_id < gridDim.x)
+		{
+			int ind = thread_id / warpSize;
+			if (ind > 0)
+			{
+				//block_sums[thread_id] += partial_sums[ind - 1];
+				block_sum += partial_sums[ind - 1];
+				//printf("thread_id: %d, block_sum: %d\n", thread_id, block_sum);
+			}
+		}
+	}
+	if (thread_id < gridDim.x)
+	{
+		//printf("thread_id: %d, block_sum: %d\n", thread_id, block_sum);
+		block_sums[thread_id] = block_sum;
+	}
 	//__syncthreads();
+	grid.sync();
+
+	if (is_begin)
+	{
+		int ind = blockIdx.x;
+		if (ind > 0)
+		{
+			//printf("thread %d under ind %d has value: %d\n", thread_id, ind, block_sums[ind - 1]);
+			//printf(" has value %d\n", block_sums[ind - 1]);
+			int tmp = index;
+			index += block_sums[ind - 1];
+			//printf("thread %d adds %d to index %d and has %d\n", thread_id, block_sums[ind-1], tmp, index);
+		}
+	}
+	__syncthreads();
+
+
 
 	if (is_begin)
 	{
 		// gather
 		//if (warp_id > 0)
 		//	index += sums[warp_id - 1];
-
+		unsigned write;
 		if (w_type == EMPTY_WORD)
-			output[index - 1] = get_compressed(segment_len, 0);
+			write = get_compressed(segment_len, 0);
+		//output[index - 1] = get_compressed(segment_len, 0);
 		else if (w_type == FULL_WORD)
-			output[index - 1] = get_compressed(segment_len, 1);
+			write = get_compressed(segment_len, 1);
+		//output[index - 1] = get_compressed(segment_len, 1);
 		else
-			output[index - 1] = gulp;
+			write = gulp;
+			//output[index - 1] = gulp;
+		output[index - 1] = write;
+		//printf("thread %d has value: %d\n", thread_id, segment_len);
+		//printf("Thread %d writes %u on index %d\n", thread_id, write, index - 1);
 	}
 }
 
@@ -392,7 +489,7 @@ UINT* SharedMemWAH(int size, UINT* input)
 	CUDA_CHECK(cudaMalloc((void**)&d_output, size * sizeof(UINT)), Free);
 	CUDA_CHECK(cudaMemcpy(d_input, input, size * sizeof(UINT), cudaMemcpyHostToDevice), Free);
 
-	int threads_per_block = 256;
+	int threads_per_block = 32;
 	int blocks = size / threads_per_block;
 	if (size % threads_per_block != 0)
 		blocks++;
@@ -410,15 +507,6 @@ UINT* SharedMemWAH(int size, UINT* input)
 	UINT* output = new UINT[size];
 	CUDA_CHECK(cudaMemcpy(output, d_output, size * sizeof(UINT), cudaMemcpyDeviceToHost), Free);
 	result = output;
-
-	//printf("Sequence after global-compression:\n");
-	//for (int i = 0; i < size; i++)
-	//{
-	//	UINT c = compressed_count(output[i]);
-	//	if (get_bit(output[i], 0)) printf("(%u,%u) ", c, get_bit(output[i], 1));
-	//	else printf("x ");
-	//}
-	//printf("\n");
 
 Free:
 	CUDA_CHECK(cudaFree(d_output), FreeInput);
