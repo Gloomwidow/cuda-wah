@@ -25,7 +25,7 @@ typedef struct segment {
 } segment;
 
 
-// in-warp scan, taken from https://github.com/NVIDIA/cuda-samples/blob/master/Samples/shfl_scan/shfl_scan.cu
+// taken from https://github.com/NVIDIA/cuda-samples/blob/master/Samples/shfl_scan/shfl_scan.cu
 // not work-efficient implementation
 // TODO: do better implementation
 // TODO: scan should be exclusive
@@ -222,11 +222,11 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 		index--;
 	grid.sync();
 
+
+
 	// INTER-BLOCKS SCAN
-	//__shared__ int sums[WARPS_IN_BLOCK];
+	// write block_sum to global memory
 	UINT* block_sums = output;
-	//if (threadIdx.x == blockDim.x - 1)
-	int writing_thread_id;
 	__shared__ bool has_last_beginning;
 	if (threadIdx.x == 0)
 		has_last_beginning = false;
@@ -234,191 +234,47 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 	if (am_last_beginning_inblock)
 	{
 		has_last_beginning = true;
-		//printf("block %d has value: %d\n", blockIdx.x, index);
 		block_sums[blockIdx.x] = index;
-		//printf("thread_id: %d, block_sum: %d, blockIdx.x: %d\n", thread_id, block_sums[blockIdx.x], blockIdx.x);
 	}
 	__syncthreads();
 	if (!has_last_beginning)
 	{
 		if (threadIdx.x == warps_count * warpSize - 1)
-		{
 			block_sums[blockIdx.x] = index;
-			//printf("thread_id: %d, block_sum: %d, blockIdx.x: %d\n", thread_id, block_sums[blockIdx.x], blockIdx.x);
-		}
 	}
 	grid.sync();
 
+
+	// Kernel assumes that there are at least as many threads in block as the total number of blocks.
+	// This assumption makes sense since this kernel is cooperative.
+	// Indeed, there ain't many blocks then.
+	__shared__ int partial_sums[2048];	//TODO: change
 	int block_sum = 0;
 	if (thread_id < gridDim.x)
-	{
 		block_sum = block_sums[thread_id];
-	}
-	__shared__ UINT partial_sums[2048];	//TODO: change
 	grid.sync();
-	if (thread_id < gridDim.x)		// maximum is 65535 = 2^16 - 1 threads
-	{
-		// in-warp scan
-		for (int i = 1; i <= warpSize; i *= 2)
-		{
-			int n = __shfl_up_sync(FULL_MASK, block_sum, i);	// IMPORTANT: what happens when this is not FULL_MASK???
 
-			if (lane_id >= i)
-				block_sum += n;
-		}
+	inclusive_scan_inblock_sync(&block_sum, partial_sums, warp_id, lane_id, warps_count);
 
-		if (gridDim.x > warpSize)								// if there is more than 32 blocks, there needs to be next level of scan executed
-		{
-			int lane = warpSize - 1 - __clz(__activemask());
-			if (lane_id == lane)
-			{
-				partial_sums[warp_id] = block_sum;				// last thread in warp writes its warp partial sum to `partial_sums` in sh_mem
-			}
-		}
-	}
-	__syncthreads();
-	__shared__ UINT partial_sums2[64];
-	int partial_sums_len = gridDim.x / warpSize;
-	if (gridDim.x % warpSize != 0)
-		partial_sums_len++;
 	if (thread_id < gridDim.x)
-	{
-		if (gridDim.x > warpSize)
-		{
-			if (thread_id < partial_sums_len)			// there is maximum 2048 = 2^11 `partial_sums` values
-			{
-				int partial_sum = partial_sums[thread_id];
-
-				// in-warp scan
-				for (int i = 0; i < warpSize; i *= 2)
-				{
-					int n = __shfl_up_sync(FULL_MASK, partial_sum, i);
-
-					if (lane_id >= i)
-						partial_sum += n;
-				}
-				// last thread in warp writes its partial sum to memory (another space in shared memory)
-				if (partial_sums_len > warpSize)
-				{
-					int lane = warpSize - 1 - __clz(__activemask());
-					if (lane_id == lane)
-					{
-						partial_sums2[warp_id] = partial_sum;
-					}
-				}
-			}
-		}
-	}
-	__syncthreads();
-	__shared__ UINT partial_sums3[2];
-	int partial_sums2_len = partial_sums_len / warpSize;
-	if (partial_sums_len % warpSize != 0)
-		partial_sums2_len++;
-	if (gridDim.x > warpSize && thread_id < partial_sums_len)		// there is maximum 64 = 2^6 `partial_sums2` values
-	{
-		int partial_sum2 = partial_sums2[thread_id];
-
-		// in-warp scan
-		for (int i = 0; i < warpSize; i *= 2)
-		{
-			int n = __shfl_up_sync(FULL_MASK, partial_sum2, i);
-
-			if (lane_id >= i)
-				partial_sum2 += n;
-		}
-		// last thread in warp writes its partial sum to memory (yet another space in shared memory)
-		if (partial_sums2_len > warpSize)
-		{
-			int lane = warpSize - 1 - __clz(__activemask());
-			if (lane_id == lane)
-			{
-				partial_sums3[warp_id] = partial_sum2;
-			}
-		}
-	}
-	__syncthreads();
-	int partial_sums3_len = partial_sums2_len / warpSize;
-	if (partial_sums3_len % warpSize != 0)
-		partial_sums3_len++;
-	if (partial_sums3_len > 1)
-	{
-		if (thread_id == 0)
-		{
-			partial_sums3[1] += partial_sums3[0];
-		}
-	}
-	__syncthreads();
-	if (partial_sums2_len > warpSize)
-	{
-		if (thread_id < partial_sums2_len)
-		{
-			int ind = thread_id / warpSize;
-			if (ind > 0)
-				partial_sums2[thread_id] += partial_sums3[ind - 1];
-		}
-	}
-	__syncthreads();
-	if (partial_sums_len > warpSize)
-	{
-		if (thread_id < partial_sums_len)
-		{
-			int ind = thread_id / warpSize;
-			if (ind > 0)
-				partial_sums[thread_id] += partial_sums2[ind - 1];
-		}
-	}
-	__syncthreads();
-	if (gridDim.x > warpSize)
-	{
-		if (thread_id < gridDim.x)
-		{
-			int ind = thread_id / warpSize;
-			if (ind > 0)
-			{
-				//block_sums[thread_id] += partial_sums[ind - 1];
-				block_sum += partial_sums[ind - 1];
-				//printf("thread_id: %d, block_sum: %d\n", thread_id, block_sum);
-			}
-		}
-	}
-	if (thread_id < gridDim.x)
-	{
-		//printf("thread_id: %d, block_sum: %d\n", thread_id, block_sum);
 		block_sums[thread_id] = block_sum;
-	}
-	//__syncthreads();
 	grid.sync();
 
 	if (is_begin)
 	{
 		int ind = blockIdx.x;
-		if (ind > 0)
-		{
+		if (blockIdx.x > 0)
 			index += block_sums[ind - 1];
-		}
 	}
-	__syncthreads();
-
-
 
 	if (is_begin)
 	{
-		// gather
-		//if (warp_id > 0)
-		//	index += sums[warp_id - 1];
-		unsigned write;
 		if (w_type == EMPTY_WORD)
-			write = get_compressed(segment_len, 0);
-		//output[index - 1] = get_compressed(segment_len, 0);
+			output[index - 1] = get_compressed(segment_len, 0);
 		else if (w_type == FULL_WORD)
-			write = get_compressed(segment_len, 1);
-		//output[index - 1] = get_compressed(segment_len, 1);
+			output[index - 1] = get_compressed(segment_len, 1);
 		else
-			write = gulp;
-			//output[index - 1] = gulp;
-		output[index - 1] = write;
-		//printf("thread %d has value: %d\n", thread_id, segment_len);
-		//printf("Thread %d writes %u on index %d\n", thread_id, write, index - 1);
+			output[index - 1] = gulp;
 	}
 }
 
