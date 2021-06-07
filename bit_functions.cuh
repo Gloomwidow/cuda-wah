@@ -1,6 +1,15 @@
 #include "device_launch_parameters.h"
 #include "defines.h"
 
+
+enum WORD_TYPE {
+	EMPTY_WORD = 0,
+	FULL_WORD = 1,
+	TAIL_WORD = 2
+};
+
+__device__ WORD_TYPE get_word_type(UINT gulp);
+
 //gets i-th bit in int
 __host__ __device__ UINT get_bit(UINT src, int i);
 

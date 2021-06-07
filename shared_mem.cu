@@ -13,14 +13,18 @@
 
 #define WARPS_IN_BLOCK 32
 
-enum WORD_TYPE {
-	EMPTY_WORD = 0,
-	FULL_WORD = 1,
-	TAIL_WORD = 2
-};
-
 
 namespace cg = cooperative_groups;
+
+typedef struct segment {
+	uchar1 l_end_type;
+	uchar1 l_end_len;
+
+	uchar1 r_end_type;
+	uchar1 r_end_len;
+} segment;
+
+
 
 //__global__ void scan(float *g_odata, float *g_idata, int n)
 //{
@@ -46,24 +50,6 @@ namespace cg = cooperative_groups;
 //	g_odata[thid] = temp[pout*n+thid]; // write output
 //} 
 
-typedef struct segment {
-	uchar1 l_end_type;
-	uchar1 l_end_len;
-
-	uchar1 r_end_type;
-	uchar1 r_end_len;
-} segment;
-
-
-// calculate type of the word
-__device__ WORD_TYPE get_word_type(UINT gulp)
-{
-	if (is_zeros(gulp))
-		return EMPTY_WORD;
-	if (is_ones(gulp))
-		return FULL_WORD;
-	return TAIL_WORD;
-}
 
 // kernel assumes that grid is 1D
 __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
