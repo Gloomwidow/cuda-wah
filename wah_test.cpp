@@ -323,6 +323,186 @@ void MultipleWarpsMerge(UINT* (*tested_function)(int, UINT*))
 	delete[] result;
 }
 
+void BigMerge(UINT* (*tested_function)(int, UINT*))
+{
+	int offset = 5;
+	int length = 12;
+	int warps = 256;
+	int size = 32 * warps;
+	UINT* table = new UINT[size];
+	for (int i = 0; i < size; i++)
+	{
+		table[i] = 0;
+	}
+	for (int i = 0; i < warps-2; i++)
+	{
+		int start = 32 * (i+1) - offset;
+		for (int j = start; j < length; j++)
+		{
+			table[j] = 1;
+		}
+	}
+	UINT* result = CpuWAH(size, table);
+	int test_result_size = last_wah_count;
+	Test(tested_function, size, table, test_result_size, result, "Big Merge");
+	delete[] table;
+	delete[] result;
+}
+
+void BigMergeWithInterrupts(UINT* (*tested_function)(int, UINT*))
+{
+	int warps = 512;
+	int size = 32 * warps;
+	UINT* table = new UINT[size];
+	for (int i = 0; i < size; i++)
+	{
+		table[i] = 0;
+	}
+	table[11] = 11;
+	table[1353] = 1353;
+	table[5600] = 5600;
+	table[10000] = 10000;
+	table[12765] = 12765;
+	
+	UINT* result = CpuWAH(size, table);
+	int test_result_size = last_wah_count;
+	Test(tested_function, size, table, test_result_size, result, "Big Merge With Interrupts");
+	delete[] table;
+	delete[] result;
+}
+
+void BigNoMerging(UINT* (*tested_function)(int, UINT*))
+{
+	int warps = 512;
+	int size = 32 * warps;
+	UINT* table = new UINT[size];
+	for (int i = 0; i < size; i++)
+	{
+		table[i] = 0;
+	}
+	for (int i = 0; i < warps - 2; i++)
+	{
+		int start = 31 * (i + 1);
+		table[start] = start;
+	}
+
+	UINT* result = CpuWAH(size, table);
+	int test_result_size = last_wah_count;
+	Test(tested_function, size, table, test_result_size, result, "Big Without Merging");
+	delete[] table;
+	delete[] result;
+}
+
+void BigMultipleDifferentSequences(UINT* (*tested_function)(int, UINT*))
+{
+	int warps = 512;
+	int size = 32 * warps;
+	int seqs = 4;
+	int lengths[4]{ 68,111,36,245 };
+	int sel_l = 0;
+	int symbol = 0;
+	int curr_length = 0;
+
+	UINT* table = new UINT[size];
+	for (int i = 0; i < size; i++)
+	{
+		table[i] = symbol;
+		curr_length++;
+		if (curr_length == lengths[sel_l])
+		{
+			sel_l = (sel_l + 1) % seqs;
+			curr_length = 0;
+			if (symbol == 0) symbol = 0x7FFFFFFF;
+			else symbol = 0;
+		}
+	}
+
+	UINT* result = CpuWAH(size, table);
+	int test_result_size = last_wah_count;
+	Test(tested_function, size, table, test_result_size, result, "Big Multiple Different Sequences");
+	delete[] table;
+	delete[] result;
+}
+
+void BigMultipleDifferentSequencesWithLiterals(UINT* (*tested_function)(int, UINT*))
+{
+	int warps = 1024;
+	int size = 32 * warps;
+	int seqs = 9;
+	int lengths[9]{ 68,321,4,323,43,22,9,213,55 };
+	int sel_l = 0;
+	int symbol = 0;
+	int curr_length = 0;
+
+	UINT* table = new UINT[size];
+	for (int i = 0; i < size; i++)
+	{
+		table[i] = symbol;
+		curr_length++;
+		if (curr_length == lengths[sel_l])
+		{
+			sel_l = (sel_l + 1) % seqs;
+			curr_length = 0;
+			if (symbol == 0) symbol = 0x7FFFFFFF;
+			else if (symbol == 0x7FFFFFFF) symbol = 256;
+			else symbol = 0;
+		}
+	}
+
+	UINT* result = CpuWAH(size, table);
+	int test_result_size = last_wah_count;
+	Test(tested_function, size, table, test_result_size, result, "Big Multiple Different Sequences With Literals");
+	delete[] table;
+	delete[] result;
+}
+
+void BigScarceSequences(UINT* (*tested_function)(int, UINT*))
+{
+	int warps = 1024;
+	int size = 32 * warps;
+	int seqs = 9;
+	int sel_l = 0;
+	int symbol = 0;
+	int curr_length = 0;
+
+	UINT* table = new UINT[size];
+	for (int i = 0; i < size; i++)
+	{
+		table[i] = 556;	
+	}
+
+	for (int i = 129; i < 134; i++)
+	{
+		table[i] = 0;
+	}
+	for (int i = 789; i < 798; i++)
+	{
+		table[i] = 0x7FFFFFFF;
+	}
+	for (int i = 2556; i < 2559; i++)
+	{
+		table[i] = 0x7FFFFFFF;
+	}
+	for (int i = 5899; i < 5912; i++)
+	{
+		table[i] = 0;
+	}
+	for (int i = 12000; i < 12009; i++)
+	{
+		table[i] = 0;
+	}
+	for (int i = 26055; i < 26069; i++)
+	{
+		table[i] = 0x7FFFFFFF;
+	}
+
+	UINT* result = CpuWAH(size, table);
+	int test_result_size = last_wah_count;
+	Test(tested_function, size, table, test_result_size, result, "Big Scarce Sequences");
+	delete[] table;
+	delete[] result;
+}
+
 void UnitTests(UINT* (*tested_function)(int, UINT*))
 {
 	printf("Performing unit tests...\n");
@@ -333,5 +513,12 @@ void UnitTests(UINT* (*tested_function)(int, UINT*))
 	MixedCompressionWithLiterals(tested_function);
 	AllVariants_1(tested_function);
 	MultipleWarpsMerge(tested_function);
+
+	BigMerge(tested_function);
+	BigMergeWithInterrupts(tested_function);
+	BigNoMerging(tested_function);
+	BigMultipleDifferentSequences(tested_function);
+	BigMultipleDifferentSequencesWithLiterals(tested_function);
+	BigScarceSequences(tested_function);
 	printf("\n\n");
 }
