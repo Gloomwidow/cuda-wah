@@ -25,31 +25,49 @@ typedef struct segment {
 } segment;
 
 
+// in-warp scan, taken from https://github.com/NVIDIA/cuda-samples/blob/master/Samples/shfl_scan/shfl_scan.cu
+// not work-efficient implementation
+// TODO: do better implementation
+// TODO: scan should be exclusive
+__device__ void inclusive_scan_inblock_sync(int* value, int* smem_ptr, int warp_id, int lane_id, int warps_count)
+{
+	// in-warp scan
+	for (int i = 1; i <= warpSize; i *= 2)
+	{
+		int n = __shfl_up_sync(FULL_MASK, *value, i);	// add width as argument???
 
-//__global__ void scan(float *g_odata, float *g_idata, int n)
-//{
-//	extern __shared__ float temp[]; // allocated on invocation
-//	int thid = threadIdx.x;
-//	int pout = 0, pin = 1;   
-//	
-//	// Load input into shared memory.
-//	// This is exclusive scan, so shift right by one
-//	// and set first element to 0
-//	temp[pout*n + thid] = (thid > 0) ? g_idata[thid-1] : 0;
-//	__syncthreads();
-//	for (int offset = 1; offset < n; offset *= 2)
-//	{     
-//		pout = 1 - pout; // swap double buffer indices     
-//		pin = 1 - pout;
-//		if (thid >= offset)
-//			temp[pout*n+thid] += temp[pin*n+thid - offset];
-//		else
-//			temp[pout*n+thid] = temp[pin*n+thid];
-//		__syncthreads();
-//	}   
-//	g_odata[thid] = temp[pout*n+thid]; // write output
-//} 
+		if (lane_id >= i)
+			*value += n;
+	}
+	if (warps_count == 1)
+		return;
 
+	// inter-warp scan
+	if (lane_id == warpSize - 1)
+		smem_ptr[warp_id] = *value;
+	__syncthreads();
+
+	// the same shfl scan operation, but performed on warp sums
+	// this can be safely done by a single warp, since there is maximum of 32 warps in a block
+	if (warp_id == 0 && lane_id < warps_count)
+	{
+		int warp_sum = smem_ptr[lane_id];
+
+		int mask = (1 << warps_count) - 1;
+		for (int i = 1; i <= warps_count; i *= 2)
+		{
+			int n = __shfl_up_sync(mask, warp_sum, i);
+			if (lane_id >= i)
+				warp_sum += n;
+		}
+		smem_ptr[lane_id] = warp_sum;
+	}
+	__syncthreads();
+
+	if (warp_id > 0)
+		*value += smem_ptr[warp_id - 1];
+	__syncthreads();
+}
 
 // kernel assumes that grid is 1D
 __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
@@ -127,50 +145,12 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 		}
 	}
 	__syncthreads();
-
 	// here every thread-beginning knows its segment's length (in-block boundaries)
 
-	// in-warp scan, taken from https://github.com/NVIDIA/cuda-samples/blob/master/Samples/shfl_scan/shfl_scan.cu
-	// not work-efficient implementation
-	// TODO: do better implementation
-	// TODO: scan should be exclusive
-	int index = is_begin ? 1 : 0;
-	for (int i = 1; i <= warpSize; i *= 2)
-	{
-		int n = __shfl_up_sync(FULL_MASK, index, i);	// add width as argument???
 
-		if (lane_id >= i)
-			index += n;
-	}
-
-	// inter-warp scan
 	__shared__ int sums[WARPS_IN_BLOCK];
-	if (lane_id == warpSize - 1)
-		sums[warp_id] = index;
-	__syncthreads();
-
-	// the same shfl scan operation, but performed on warp sums
-	// this can be safely done by a single warp
-	if (warp_id == 0 && lane_id < warps_count)
-	{
-		int warp_sum = sums[lane_id];
-		//printf("thread %d has value %d\n", thread_id, warp_sum);
-		//if (lane_id == 0)
-		//	printf("------------------------\n");
-
-		int mask = (1 << warps_count) - 1;
-		for (int i = 1; i <= warps_count; i *= 2)
-		{
-			int n = __shfl_up_sync(mask, warp_sum, i);
-			if (lane_id >= i)
-				warp_sum += n;
-		}
-		sums[lane_id] = warp_sum;
-	}
-	__syncthreads();
-
-	if (warp_id > 0)
-		index += sums[warp_id - 1];
+	int index = is_begin ? 1 : 0;
+	inclusive_scan_inblock_sync(&index, sums, warp_id, lane_id, warps_count);
 	// now index is correct in block boundaries
 
 	
@@ -231,7 +211,6 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 		{
 			for (int i = blockIdx.x + 1; i < gridDim.x && block_segments[i].l_end_type.x == w_type; i++)
 			{
-				int tmp = segment_len;
 				segment_len += block_segments[i].l_end_len.x;		// check types
 				if (block_segments[i].l_end_len.x != blockDim.x)
 					break;
@@ -415,11 +394,7 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 		int ind = blockIdx.x;
 		if (ind > 0)
 		{
-			//printf("thread %d under ind %d has value: %d\n", thread_id, ind, block_sums[ind - 1]);
-			//printf(" has value %d\n", block_sums[ind - 1]);
-			int tmp = index;
 			index += block_sums[ind - 1];
-			//printf("thread %d adds %d to index %d and has %d\n", thread_id, block_sums[ind-1], tmp, index);
 		}
 	}
 	__syncthreads();
@@ -479,6 +454,17 @@ UINT* SharedMemWAH(int size, UINT* input)
 	int blocks = size / threads_per_block;
 	if (size % threads_per_block != 0)
 		blocks++;
+
+	// as many blocks as there are SMs can be launched safely
+	int device = 0;
+	cudaDeviceProp deviceProp;
+	cudaGetDeviceProperties(&deviceProp, device);
+	//printf("SMs: %d\n", deviceProp.multiProcessorCount);
+
+	int numBlocksPerSm = 0;
+	//int numThreads = 128;
+	cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, SharedMemKernel, threads_per_block, 0);
+	//printf("numBlocksPerSm: %d \n", numBlocksPerSm);
 
 	//SharedMemKernel<<<blocks, threads_per_block>>>(d_input, size, d_output);
 	void* params[3];

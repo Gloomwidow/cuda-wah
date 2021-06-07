@@ -28,6 +28,7 @@ int main() {
         //UnitTests(&BallotSyncWAH);
         //UnitTests(&AtomicAddWAH);
 		UnitTests(&SharedMemWAH);
+		//UnitTests(&RemoveIfSharedMemWAH);
     }
     else
     {
