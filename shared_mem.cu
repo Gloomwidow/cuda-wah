@@ -13,12 +13,6 @@
 
 #define WARPS_IN_BLOCK 32
 
-enum WORD_TYPE {
-	EMPTY_WORD = 0,
-	FULL_WORD = 1,
-	TAIL_WORD = 2
-};
-
 
 namespace cg = cooperative_groups;
 
@@ -31,15 +25,31 @@ typedef struct segment {
 } segment;
 
 
-// calculate type of the word
-__device__ WORD_TYPE get_word_type(UINT gulp)
-{
-	if (is_zeros(gulp))
-		return EMPTY_WORD;
-	if (is_ones(gulp))
-		return FULL_WORD;
-	return TAIL_WORD;
-}
+
+//__global__ void scan(float *g_odata, float *g_idata, int n)
+//{
+//	extern __shared__ float temp[]; // allocated on invocation
+//	int thid = threadIdx.x;
+//	int pout = 0, pin = 1;   
+//	
+//	// Load input into shared memory.
+//	// This is exclusive scan, so shift right by one
+//	// and set first element to 0
+//	temp[pout*n + thid] = (thid > 0) ? g_idata[thid-1] : 0;
+//	__syncthreads();
+//	for (int offset = 1; offset < n; offset *= 2)
+//	{     
+//		pout = 1 - pout; // swap double buffer indices     
+//		pin = 1 - pout;
+//		if (thid >= offset)
+//			temp[pout*n+thid] += temp[pin*n+thid - offset];
+//		else
+//			temp[pout*n+thid] = temp[pin*n+thid];
+//		__syncthreads();
+//	}   
+//	g_odata[thid] = temp[pout*n+thid]; // write output
+//} 
+
 
 // kernel assumes that grid is 1D
 __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
@@ -221,6 +231,7 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 		{
 			for (int i = blockIdx.x + 1; i < gridDim.x && block_segments[i].l_end_type.x == w_type; i++)
 			{
+				int tmp = segment_len;
 				segment_len += block_segments[i].l_end_len.x;		// check types
 				if (block_segments[i].l_end_len.x != blockDim.x)
 					break;
@@ -404,7 +415,11 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 		int ind = blockIdx.x;
 		if (ind > 0)
 		{
+			//printf("thread %d under ind %d has value: %d\n", thread_id, ind, block_sums[ind - 1]);
+			//printf(" has value %d\n", block_sums[ind - 1]);
+			int tmp = index;
 			index += block_sums[ind - 1];
+			//printf("thread %d adds %d to index %d and has %d\n", thread_id, block_sums[ind-1], tmp, index);
 		}
 	}
 	__syncthreads();
