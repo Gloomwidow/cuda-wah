@@ -7,7 +7,7 @@
 #include <ctime>
 #include "bit_functions.cuh"
 
-#define WARPS_IN_BLOCK 32
+#define MAX(a,b) (((a)>(b)) ? (a) : (b))
 
 
 namespace cg = cooperative_groups;
@@ -19,53 +19,6 @@ typedef struct segment {
 	uchar1 r_end_type;
 	uchar1 r_end_len;
 } segment;
-
-
-// taken from https://github.com/NVIDIA/cuda-samples/blob/master/Samples/shfl_scan/shfl_scan.cu
-// not work-efficient implementation
-// TODO: do better implementation
-// TODO: scan should be exclusive
-__device__ void inclusive_scan_inblock_sync(int* value, void* smem_ptr, int lane_id, int warp_id, int warps_count)
-{
-	int* sums = (int*)smem_ptr;
-
-	// in-warp scan
-	for (int i = 1; i <= warpSize; i *= 2)
-	{
-		int n = __shfl_up_sync(FULL_MASK, *value, i);	// add width as argument???
-
-		if (lane_id >= i)
-			*value += n;
-	}
-	if (warps_count == 1)
-		return;
-
-	// inter-warp scan
-	if (lane_id == warpSize - 1)
-		sums[warp_id] = *value;
-	__syncthreads();
-
-	// the same shfl scan operation, but performed on warp sums
-	// this can be safely done by a single warp, since there is maximum of 32 warps in a block
-	if (warp_id == 0 && lane_id < warps_count)
-	{
-		int warp_sum = sums[lane_id];
-
-		int mask = (1 << warps_count) - 1;
-		for (int i = 1; i <= warps_count; i *= 2)
-		{
-			int n = __shfl_up_sync(mask, warp_sum, i);
-			if (lane_id >= i)
-				warp_sum += n;
-		}
-		sums[lane_id] = warp_sum;
-	}
-	__syncthreads();
-
-	if (warp_id > 0)
-		*value += sums[warp_id - 1];
-	__syncthreads();
-}
 
 __device__ int get_segmentlen_inblock_sync(bool* is_begin, WORD_TYPE w_type, void* smem_ptr, int lane_id, int warp_id, int warps_count)
 {
@@ -117,6 +70,52 @@ __device__ int get_segmentlen_inblock_sync(bool* is_begin, WORD_TYPE w_type, voi
 	__syncthreads();
 
 	return segment_len;
+}
+
+// taken from https://github.com/NVIDIA/cuda-samples/blob/master/Samples/shfl_scan/shfl_scan.cu
+// not work-efficient implementation
+// TODO: do better implementation
+// TODO: scan should be exclusive
+__device__ void inclusive_scan_inblock_sync(int* value, void* smem_ptr, int lane_id, int warp_id, int warps_count)
+{
+	int* sums = (int*)smem_ptr;
+
+	// in-warp scan
+	for (int i = 1; i <= warpSize; i *= 2)
+	{
+		int n = __shfl_up_sync(FULL_MASK, *value, i);	// add width as argument???
+
+		if (lane_id >= i)
+			*value += n;
+	}
+	if (warps_count == 1)
+		return;
+
+	// inter-warp scan
+	if (lane_id == warpSize - 1)
+		sums[warp_id] = *value;
+	__syncthreads();
+
+	// the same shfl scan operation, but performed on warp sums
+	// this can be safely done by a single warp, since there is maximum of 32 warps in a block
+	if (warp_id == 0 && lane_id < warps_count)
+	{
+		int warp_sum = sums[lane_id];
+
+		int mask = (1 << warps_count) - 1;
+		for (int i = 1; i <= warps_count; i *= 2)
+		{
+			int n = __shfl_up_sync(mask, warp_sum, i);
+			if (lane_id >= i)
+				warp_sum += n;
+		}
+		sums[lane_id] = warp_sum;
+	}
+	__syncthreads();
+
+	if (warp_id > 0)
+		*value += sums[warp_id - 1];
+	__syncthreads();
 }
 
 __device__ inline bool calc_segmentlen_ingrid_sync(int* segment_len, int* index, bool* is_begin, WORD_TYPE w_type, void* smem_ptr, void* output, int lane_id, int warp_id, int warps_count, cg::grid_group grid)
@@ -194,6 +193,8 @@ __device__ inline bool calc_segmentlen_ingrid_sync(int* segment_len, int* index,
 // kernel assumes that grid is 1D
 __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 {
+	extern __shared__ int smem_ptr[];
+
 	const int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
 	const int lane_id = threadIdx.x % warpSize;
 	const int warp_id = threadIdx.x / warpSize;
@@ -221,39 +222,35 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 	}
 
 	
-	__shared__ segment segments[WARPS_IN_BLOCK];	// TODO: make it allocated dynamically
-	int segment_len = get_segmentlen_inblock_sync(&is_begin, w_type, segments, lane_id, warp_id, warps_count);
+	int segment_len = get_segmentlen_inblock_sync(&is_begin, w_type, smem_ptr, lane_id, warp_id, warps_count);
 	// every thread-beginning knows its segment's length (in-block boundaries)
 
-
-	__shared__ int sums[WARPS_IN_BLOCK];
 	int index = is_begin ? 1 : 0;
-	inclusive_scan_inblock_sync(&index, sums, lane_id, warp_id, warps_count);
+	inclusive_scan_inblock_sync(&index, smem_ptr, lane_id, warp_id, warps_count);
 	// now index is correct in block boundaries
 
 	
 	// ================
 	// INTER-BLOCKS STEP
 	// ================
-	__shared__ unsigned block_begins_masks[WARPS_IN_BLOCK];
 	cg::grid_group grid = cg::this_grid();
-	bool am_last_beginning_inblock = calc_segmentlen_ingrid_sync(&segment_len, &index, &is_begin, w_type, block_begins_masks, output, lane_id, warp_id, warps_count, grid);
+	bool am_last_beginning_inblock = calc_segmentlen_ingrid_sync(&segment_len, &index, &is_begin, w_type, smem_ptr, output, lane_id, warp_id, warps_count, grid);
 
 
 	// INTER-BLOCKS SCAN
 	// write block_sum to global memory
 	UINT* block_sums = output;
-	__shared__ bool has_last_beginning;
+	bool* has_last_beginning = (bool*)smem_ptr;
 	if (threadIdx.x == 0)
-		has_last_beginning = false;
+		has_last_beginning[0] = false;
 	__syncthreads();
 	if (am_last_beginning_inblock)
 	{
-		has_last_beginning = true;
+		has_last_beginning[0] = true;
 		block_sums[blockIdx.x] = index;
 	}
 	__syncthreads();
-	if (!has_last_beginning)
+	if (!has_last_beginning[0])
 	{
 		if (threadIdx.x == warps_count * warpSize - 1)
 			block_sums[blockIdx.x] = index;
@@ -264,13 +261,12 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 	// Kernel assumes that there are at least as many threads in block as the total number of blocks.
 	// This assumption makes sense since this kernel is cooperative.
 	// Indeed, there ain't many blocks then.
-	__shared__ int partial_sums[2048];	//TODO: change
 	int block_sum = 0;
 	if (thread_id < gridDim.x)
 		block_sum = block_sums[thread_id];
 	grid.sync();
 
-	inclusive_scan_inblock_sync(&block_sum, partial_sums, lane_id, warp_id, warps_count);
+	inclusive_scan_inblock_sync(&block_sum, smem_ptr, lane_id, warp_id, warps_count);
 
 	if (thread_id < gridDim.x)
 		block_sums[thread_id] = block_sum;
@@ -322,7 +318,7 @@ UINT* SharedMemWAH(int size, UINT* input)
 	CUDA_CHECK(cudaMalloc((void**)&d_output, size * sizeof(UINT)), Free);
 	CUDA_CHECK(cudaMemcpy(d_input, input, size * sizeof(UINT), cudaMemcpyHostToDevice), Free);
 
-	int threads_per_block = 32;
+	int threads_per_block = 512;
 	int blocks = size / threads_per_block;
 	if (size % threads_per_block != 0)
 		blocks++;
@@ -336,14 +332,20 @@ UINT* SharedMemWAH(int size, UINT* input)
 	int numBlocksPerSm = 0;
 	//int numThreads = 128;
 	cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, SharedMemKernel, threads_per_block, 0);
-	//printf("numBlocksPerSm: %d \n", numBlocksPerSm);
+	printf("numBlocksPerSm: %d \n", numBlocksPerSm);
+
+	int warp_size = 32;
+	int warps_count = threads_per_block / warp_size;
+	size_t smem_size = MAX(sizeof(segment), sizeof(int));
+	smem_size = MAX(smem_size, sizeof(unsigned));
+	smem_size = smem_size * warps_count;
 
 	//SharedMemKernel<<<blocks, threads_per_block>>>(d_input, size, d_output);
 	void* params[3];
 	params[0] = &d_input;
 	params[1] = &size;
 	params[2] = &d_output;
-	cudaLaunchCooperativeKernel((void*)SharedMemKernel, blocks, threads_per_block, params);
+	cudaLaunchCooperativeKernel((void*)SharedMemKernel, blocks, threads_per_block, params, smem_size);
 
 	CUDA_CHECK(cudaGetLastError(), Free);
 	CUDA_CHECK(cudaDeviceSynchronize(), Free);
