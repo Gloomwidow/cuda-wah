@@ -7,10 +7,6 @@
 #include <ctime>
 #include "bit_functions.cuh"
 
-//#define EMPTY_WORD	0
-//#define FULL_WORD	1
-//#define TAIL_WORD	2
-
 #define WARPS_IN_BLOCK 32
 
 
@@ -29,8 +25,10 @@ typedef struct segment {
 // not work-efficient implementation
 // TODO: do better implementation
 // TODO: scan should be exclusive
-__device__ void inclusive_scan_inblock_sync(int* value, int* smem_ptr, int warp_id, int lane_id, int warps_count)
+__device__ void inclusive_scan_inblock_sync(int* value, void* smem_ptr, int lane_id, int warp_id, int warps_count)
 {
+	int* sums = (int*)smem_ptr;
+
 	// in-warp scan
 	for (int i = 1; i <= warpSize; i *= 2)
 	{
@@ -44,14 +42,14 @@ __device__ void inclusive_scan_inblock_sync(int* value, int* smem_ptr, int warp_
 
 	// inter-warp scan
 	if (lane_id == warpSize - 1)
-		smem_ptr[warp_id] = *value;
+		sums[warp_id] = *value;
 	__syncthreads();
 
 	// the same shfl scan operation, but performed on warp sums
 	// this can be safely done by a single warp, since there is maximum of 32 warps in a block
 	if (warp_id == 0 && lane_id < warps_count)
 	{
-		int warp_sum = smem_ptr[lane_id];
+		int warp_sum = sums[lane_id];
 
 		int mask = (1 << warps_count) - 1;
 		for (int i = 1; i <= warps_count; i *= 2)
@@ -60,51 +58,23 @@ __device__ void inclusive_scan_inblock_sync(int* value, int* smem_ptr, int warp_
 			if (lane_id >= i)
 				warp_sum += n;
 		}
-		smem_ptr[lane_id] = warp_sum;
+		sums[lane_id] = warp_sum;
 	}
 	__syncthreads();
 
 	if (warp_id > 0)
-		*value += smem_ptr[warp_id - 1];
+		*value += sums[warp_id - 1];
 	__syncthreads();
 }
 
-// kernel assumes that grid is 1D
-__global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
+__device__ int get_segmentlen_inblock_sync(bool* is_begin, WORD_TYPE w_type, void* smem_ptr, int lane_id, int warp_id, int warps_count)
 {
-	const int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
-	const int lane_id = threadIdx.x % warpSize;
-	const int warp_id = threadIdx.x / warpSize;
-	int warps_count;// = (inputSize % warpSize == 0) ? (inputSize / warpSize) : (inputSize / warpSize) + 1;	// TODO: correct for when there are many blocks
-	if ((blockIdx.x + 1)*blockDim.x > inputSize)	// last block can enter here
-	{
-		warps_count = (inputSize - blockIdx.x*blockDim.x) / warpSize;
-		if (inputSize % warpSize != 0)
-			warps_count++;
-	}
-	else
-		warps_count = blockDim.x / warpSize;
+	segment* segments = (segment*)smem_ptr;
 
-	UINT gulp = input[thread_id];
-
-	WORD_TYPE w_type = get_word_type(gulp);
-
-	// is this thread the beginning of a section?
-	bool is_begin = false;
-	char prev_type = __shfl_up_sync(FULL_MASK, w_type, 1);
-	if (thread_id < inputSize)
-	{
-		is_begin = (w_type == TAIL_WORD) || (w_type != prev_type);
-		if (lane_id == 0)
-			is_begin = true;
-	}
-
-	unsigned warp_begins_mask = __ballot_sync(FULL_MASK, is_begin);
 	bool am_last_beginning_inwarp = false;
-
-	__shared__ segment segments[WARPS_IN_BLOCK];	// TODO: make it allocated dynamically
-	int segment_len;
-	if (is_begin)
+	unsigned warp_begins_mask = __ballot_sync(FULL_MASK, *is_begin);
+	int segment_len = 0;
+	if (*is_begin)
 	{																									// find ID of the next thread-beginning and thus the length of the section
 		segment_len = (lane_id == warpSize - 1) ? 0 : __ffs(warp_begins_mask >> (lane_id + 1));			// note: bit shift "(int) >> 32" is not defined
 																										// note: __ffs(0) = 0
@@ -125,12 +95,12 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 	}
 	__syncthreads();
 
-	if (is_begin)
+	if (*is_begin)
 	{
 		if (warp_id > 0 && lane_id == 0 && w_type != TAIL_WORD &&										// check if the first thread-beginning in warp is really
 			(segments[warp_id - 1].r_end_type.x == w_type))												// thread-beginning in the context of the block...
 		{
-			is_begin = false;
+			*is_begin = false;
 			am_last_beginning_inwarp = false;
 		}
 
@@ -145,22 +115,17 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 		}
 	}
 	__syncthreads();
-	// here every thread-beginning knows its segment's length (in-block boundaries)
 
+	return segment_len;
+}
 
-	__shared__ int sums[WARPS_IN_BLOCK];
-	int index = is_begin ? 1 : 0;
-	inclusive_scan_inblock_sync(&index, sums, warp_id, lane_id, warps_count);
-	// now index is correct in block boundaries
-
-	
-	// ================
-	// INTER-BLOCKS STEP
-	// ================
+__device__ inline bool calc_segmentlen_ingrid_sync(int* segment_len, int* index, bool* is_begin, WORD_TYPE w_type, void* smem_ptr, void* output, int lane_id, int warp_id, int warps_count, cg::grid_group grid)
+{
 	segment* block_segments = (segment*)output;															// this allocation is just being reused
+	unsigned* block_begins_masks = (unsigned*)smem_ptr;
 	// find the last thread-beginning in block
-	warp_begins_mask = __ballot_sync(FULL_MASK, is_begin);
-	__shared__ unsigned block_begins_masks[WARPS_IN_BLOCK];
+	//__shared__ unsigned block_begins_masks[WARPS_IN_BLOCK];
+	unsigned warp_begins_mask = __ballot_sync(FULL_MASK, *is_begin);
 	if (lane_id == 0)
 		block_begins_masks[warp_id] = warp_begins_mask;
 	__syncthreads();
@@ -183,45 +148,96 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 			am_last_beginning_inblock = true;
 
 			block_segments[blockIdx.x].r_end_type = make_uchar1(w_type);
-			block_segments[blockIdx.x].r_end_len = make_uchar1(segment_len);
+			block_segments[blockIdx.x].r_end_len = make_uchar1(*segment_len);
 		}
 	}
 	if (threadIdx.x == 0)						// first thread-beginning in block
 	{
 		block_segments[blockIdx.x].l_end_type = make_uchar1(w_type);
-		block_segments[blockIdx.x].l_end_len = make_uchar1(segment_len);
+		block_segments[blockIdx.x].l_end_len = make_uchar1(*segment_len);
 	}
-	cg::grid_group grid = cg::this_grid();
+	//cg::grid_group grid = cg::this_grid();
 	grid.sync();
 
-	__shared__ bool decrement_index;
+	bool* decrement_index = (bool*)smem_ptr;
 	if (threadIdx.x == 0)
-		decrement_index = false;
-	if (is_begin)
+		*decrement_index = false;
+	__syncthreads();
+	if (*is_begin)
 	{
 		if (blockIdx.x > 0 && threadIdx.x == 0 && w_type != TAIL_WORD &&								// check if the first thread-beginning in block is really
 			block_segments[blockIdx.x - 1].r_end_type.x == w_type)										// thread-beginning in the context of the grid...
 		{
-			is_begin = false;
+			*is_begin = false;
 			am_last_beginning_inblock = false;
-			decrement_index = true;
+			*decrement_index = true;
 		}
 
 		if (am_last_beginning_inblock)																	// ...if not, the last thread-beginning form prev. block should add sth to its `segment_len`
 		{
 			for (int i = blockIdx.x + 1; i < gridDim.x && block_segments[i].l_end_type.x == w_type; i++)
 			{
-				segment_len += block_segments[i].l_end_len.x;		// check types
+				*segment_len += block_segments[i].l_end_len.x;		// check types
 				if (block_segments[i].l_end_len.x != blockDim.x)
 					break;
 			}
 		}
 	}
 	__syncthreads();
-	if (decrement_index)
-		index--;
+	if (*decrement_index)
+		*index = (*index) - 1;
 	grid.sync();
+	return am_last_beginning_inblock;
+}
 
+
+// kernel assumes that grid is 1D
+__global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
+{
+	const int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+	const int lane_id = threadIdx.x % warpSize;
+	const int warp_id = threadIdx.x / warpSize;
+	int warps_count;// = (inputSize % warpSize == 0) ? (inputSize / warpSize) : (inputSize / warpSize) + 1;	// TODO: correct for when there are many blocks
+	if ((blockIdx.x + 1)*blockDim.x > inputSize)	// last block can enter here
+	{
+		warps_count = (inputSize - blockIdx.x*blockDim.x) / warpSize;
+		if (inputSize % warpSize != 0)
+			warps_count++;
+	}
+	else
+		warps_count = blockDim.x / warpSize;
+
+	UINT gulp = input[thread_id];
+	WORD_TYPE w_type = get_word_type(gulp);
+
+	// is this thread the beginning of a section?
+	bool is_begin = false;
+	char prev_type = __shfl_up_sync(FULL_MASK, w_type, 1);
+	if (thread_id < inputSize)
+	{
+		is_begin = (w_type == TAIL_WORD) || (w_type != prev_type);
+		if (lane_id == 0)
+			is_begin = true;
+	}
+
+	
+	__shared__ segment segments[WARPS_IN_BLOCK];	// TODO: make it allocated dynamically
+	int segment_len = get_segmentlen_inblock_sync(&is_begin, w_type, segments, lane_id, warp_id, warps_count);
+	// every thread-beginning knows its segment's length (in-block boundaries)
+
+
+	__shared__ int sums[WARPS_IN_BLOCK];
+	int index = is_begin ? 1 : 0;
+	inclusive_scan_inblock_sync(&index, sums, lane_id, warp_id, warps_count);
+	// now index is correct in block boundaries
+
+	
+	// ================
+	// INTER-BLOCKS STEP
+	// ================
+	__shared__ unsigned block_begins_masks[WARPS_IN_BLOCK];
+	cg::grid_group grid = cg::this_grid();
+	bool am_last_beginning_inblock = calc_segmentlen_ingrid_sync(&segment_len, &index, &is_begin, w_type, block_begins_masks, output, lane_id, warp_id, warps_count, grid);
 
 
 	// INTER-BLOCKS SCAN
@@ -254,7 +270,7 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 		block_sum = block_sums[thread_id];
 	grid.sync();
 
-	inclusive_scan_inblock_sync(&block_sum, partial_sums, warp_id, lane_id, warps_count);
+	inclusive_scan_inblock_sync(&block_sum, partial_sums, lane_id, warp_id, warps_count);
 
 	if (thread_id < gridDim.x)
 		block_sums[thread_id] = block_sum;
