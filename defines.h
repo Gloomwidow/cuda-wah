@@ -1,5 +1,6 @@
 // This file is safe to #define without any #ifndefs
 
+#include <cooperative_groups.h>
 #ifndef UINT
 #define UINT unsigned int
 #endif // !UINT
@@ -28,6 +29,9 @@
 #ifndef GPU_THREADS_COUNT
 #define GPU_THREADS_COUNT 32
 #endif // !FULL_MASK
+
+
+
 
 
 #ifndef CUDA_CHECK

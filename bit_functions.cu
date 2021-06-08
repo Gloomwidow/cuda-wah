@@ -1,6 +1,16 @@
 #include "bit_functions.cuh"
 #include <cstdio>
 
+
+__device__ WORD_TYPE get_word_type(UINT gulp)
+{
+	if (is_zeros(gulp))
+		return EMPTY_WORD;
+	if (is_ones(gulp))
+		return FULL_WORD;
+	return TAIL_WORD;
+}
+
 __host__ __device__ UINT get_bit(UINT src, int i)
 {
 	return (1 & (src >> (31 - (i))));

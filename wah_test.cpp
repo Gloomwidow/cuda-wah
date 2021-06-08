@@ -106,10 +106,9 @@ void Test(UINT* (*tested_function)(int,UINT*),int data_size, UINT* data, int exp
 			mismatches++;
 			if (mismatches<=MISMATCH_MAX)
 			{
-				printf("Tables' values mismatch on position %d! Expected: %u, Actual: %u\n"
-					, i
-					, expected[i]
-					, actual[i]);
+				printf("Tables' values mismatch on position %d!\n", i);
+				printf("\tExpected: "); printBits(sizeof(UINT), &expected[i]);
+				printf("\tActual:   "); printBits(sizeof(UINT), &actual[i]);
 			}
 		}
 	}
@@ -197,7 +196,7 @@ void BetweenWarpsMerge(UINT* (*tested_function)(int, UINT*))
 {
 	int size = 64;
 	UINT* table = new UINT[size];
-	for (int i = 0; i < 34; i++)
+	for (int i = 0; i < 35; i++)
 	{
 		table[i] = 0;
 	}
