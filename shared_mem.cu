@@ -122,8 +122,8 @@ __device__ inline bool calc_segmentlen_ingrid_sync(int* segment_len, int* index,
 {
 	segment* block_segments = (segment*)output;															// this allocation is just being reused
 	unsigned* block_begins_masks = (unsigned*)smem_ptr;
+
 	// find the last thread-beginning in block
-	//__shared__ unsigned block_begins_masks[WARPS_IN_BLOCK];
 	unsigned warp_begins_mask = __ballot_sync(FULL_MASK, *is_begin);
 	if (lane_id == 0)
 		block_begins_masks[warp_id] = warp_begins_mask;
@@ -155,7 +155,6 @@ __device__ inline bool calc_segmentlen_ingrid_sync(int* segment_len, int* index,
 		block_segments[blockIdx.x].l_end_type = w_type;
 		block_segments[blockIdx.x].l_end_len = *segment_len;
 	}
-	//cg::grid_group grid = cg::this_grid();
 	grid.sync();
 
 	bool* decrement_index = (bool*)smem_ptr;
@@ -220,7 +219,6 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 		if (lane_id == 0)
 			is_begin = true;
 	}
-
 	
 	int segment_len = get_segmentlen_inblock_sync(&is_begin, w_type, smem_ptr, lane_id, warp_id, warps_count);
 	// every thread-beginning knows its segment's length (in-block boundaries)
@@ -236,21 +234,20 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 	cg::grid_group grid = cg::this_grid();
 	bool am_last_beginning_inblock = calc_segmentlen_ingrid_sync(&segment_len, &index, &is_begin, w_type, smem_ptr, output, lane_id, warp_id, warps_count, grid);
 
-
 	// INTER-BLOCKS SCAN
 	// write block_sum to global memory
 	UINT* block_sums = output;
 	bool* has_last_beginning = (bool*)smem_ptr;
 	if (threadIdx.x == 0)
-		has_last_beginning[0] = false;
+		*has_last_beginning = false;
 	__syncthreads();
 	if (am_last_beginning_inblock)
 	{
-		has_last_beginning[0] = true;
+		*has_last_beginning = true;
 		block_sums[blockIdx.x] = index;
 	}
 	__syncthreads();
-	if (!has_last_beginning[0])
+	if (!(*has_last_beginning))
 	{
 		if (threadIdx.x == warps_count * warpSize - 1)
 			block_sums[blockIdx.x] = index;
@@ -258,9 +255,9 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 	grid.sync();
 
 
-	// Kernel assumes that there are at least as many threads in block as the total number of blocks.
+	// Kernel assumes that there are at least as many threads in a block as the total number of blocks.
 	// This assumption makes sense since this kernel is cooperative.
-	// Indeed, there ain't many blocks then.
+	// Indeed, there ain't many blocks then (usually).
 	int block_sum = 0;
 	if (thread_id < gridDim.x)
 		block_sum = block_sums[thread_id];
@@ -334,10 +331,13 @@ UINT* SharedMemWAH(int size, UINT* input)
 	int maxBlocks = deviceProp.multiProcessorCount * numBlocksPerSm;
 	printf("needed blocks: %d, max blocks: %d\n", blocks, maxBlocks);
 	//if ()
+	// jeśli uruchamiana liczba bloków jest > liczba wątków w bloku, exit.
 
+	// calc size of needed shared memory
 	int warps_count = threads_per_block / deviceProp.warpSize;
-	size_t smem_size = MAX(sizeof(segment), sizeof(int));
-	smem_size = MAX(smem_size, sizeof(unsigned));
+	if (threads_per_block % deviceProp.warpSize != 0)
+		warps_count++;
+	size_t smem_size = MAX(MAX(sizeof(segment), sizeof(int)), sizeof(unsigned));
 	smem_size = smem_size * warps_count;
 
 	//SharedMemKernel<<<blocks, threads_per_block>>>(d_input, size, d_output);
