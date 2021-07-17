@@ -13,11 +13,11 @@
 namespace cg = cooperative_groups;
 
 typedef struct segment {
-	uchar1 l_end_type;
-	uchar1 l_end_len;
+	WORD_TYPE l_end_type;
+	int l_end_len;
 
-	uchar1 r_end_type;
-	uchar1 r_end_len;
+	WORD_TYPE r_end_type;
+	int r_end_len;
 } segment;
 
 __device__ int get_segmentlen_inblock_sync(bool* is_begin, WORD_TYPE w_type, void* smem_ptr, int lane_id, int warp_id, int warps_count)
@@ -37,13 +37,13 @@ __device__ int get_segmentlen_inblock_sync(bool* is_begin, WORD_TYPE w_type, voi
 			segment_len = (warp_id < warps_count - 1) ? (warpSize - lane_id) : (warps_count*warpSize - threadIdx.x);
 																										// considers case of the last thread-beginning in the last warp in block
 																										// when inputSize is not divisible by 32
-			segments[warp_id].r_end_type = make_uchar1(w_type);
-			segments[warp_id].r_end_len = make_uchar1(segment_len);
+			segments[warp_id].r_end_type = w_type;
+			segments[warp_id].r_end_len = segment_len;
 		}
 		if (lane_id == 0)		// the first thread-beginning in warp
 		{
-			segments[warp_id].l_end_type = make_uchar1(w_type);
-			segments[warp_id].l_end_len = make_uchar1(segment_len);
+			segments[warp_id].l_end_type = w_type;
+			segments[warp_id].l_end_len = segment_len;
 		}
 	}
 	__syncthreads();
@@ -51,7 +51,7 @@ __device__ int get_segmentlen_inblock_sync(bool* is_begin, WORD_TYPE w_type, voi
 	if (*is_begin)
 	{
 		if (warp_id > 0 && lane_id == 0 && w_type != TAIL_WORD &&										// check if the first thread-beginning in warp is really
-			(segments[warp_id - 1].r_end_type.x == w_type))												// thread-beginning in the context of the block...
+			(segments[warp_id - 1].r_end_type == w_type))												// thread-beginning in the context of the block...
 		{
 			*is_begin = false;
 			am_last_beginning_inwarp = false;
@@ -59,10 +59,10 @@ __device__ int get_segmentlen_inblock_sync(bool* is_begin, WORD_TYPE w_type, voi
 
 		if (am_last_beginning_inwarp)																	// ...if not, the last thread-beginning form prev. warp should add sth to its `segment_len`
 		{
-			for (int i = warp_id + 1; i < warps_count && segments[i].l_end_type.x == w_type; i++)
+			for (int i = warp_id + 1; i < warps_count && segments[i].l_end_type == w_type; i++)
 			{
-				segment_len += segments[i].l_end_len.x;		// check types
-				if (segments[i].l_end_len.x != warpSize)
+				segment_len += segments[i].l_end_len;		// check types
+				if (segments[i].l_end_len != warpSize)
 					break;
 			}
 		}
@@ -146,14 +146,14 @@ __device__ inline bool calc_segmentlen_ingrid_sync(int* segment_len, int* index,
 		{
 			am_last_beginning_inblock = true;
 
-			block_segments[blockIdx.x].r_end_type = make_uchar1(w_type);
-			block_segments[blockIdx.x].r_end_len = make_uchar1(*segment_len);
+			block_segments[blockIdx.x].r_end_type = w_type;
+			block_segments[blockIdx.x].r_end_len = *segment_len;
 		}
 	}
 	if (threadIdx.x == 0)						// first thread-beginning in block
 	{
-		block_segments[blockIdx.x].l_end_type = make_uchar1(w_type);
-		block_segments[blockIdx.x].l_end_len = make_uchar1(*segment_len);
+		block_segments[blockIdx.x].l_end_type = w_type;
+		block_segments[blockIdx.x].l_end_len = *segment_len;
 	}
 	//cg::grid_group grid = cg::this_grid();
 	grid.sync();
@@ -165,7 +165,7 @@ __device__ inline bool calc_segmentlen_ingrid_sync(int* segment_len, int* index,
 	if (*is_begin)
 	{
 		if (blockIdx.x > 0 && threadIdx.x == 0 && w_type != TAIL_WORD &&								// check if the first thread-beginning in block is really
-			block_segments[blockIdx.x - 1].r_end_type.x == w_type)										// thread-beginning in the context of the grid...
+			block_segments[blockIdx.x - 1].r_end_type == w_type)										// thread-beginning in the context of the grid...
 		{
 			*is_begin = false;
 			am_last_beginning_inblock = false;
@@ -174,9 +174,9 @@ __device__ inline bool calc_segmentlen_ingrid_sync(int* segment_len, int* index,
 
 		if (am_last_beginning_inblock)																	// ...if not, the last thread-beginning form prev. block should add sth to its `segment_len`
 		{
-			for (int i = blockIdx.x + 1; i < gridDim.x && block_segments[i].l_end_type.x == w_type; i++)
+			for (int i = blockIdx.x + 1; i < gridDim.x && block_segments[i].l_end_type == w_type; i++)
 			{
-				*segment_len += block_segments[i].l_end_len.x;		// check types
+				*segment_len = (*segment_len) + block_segments[i].l_end_len;		// check types
 				if (block_segments[i].l_end_len.x != blockDim.x)
 					break;
 			}
@@ -198,7 +198,7 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 	const int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
 	const int lane_id = threadIdx.x % warpSize;
 	const int warp_id = threadIdx.x / warpSize;
-	int warps_count;// = (inputSize % warpSize == 0) ? (inputSize / warpSize) : (inputSize / warpSize) + 1;	// TODO: correct for when there are many blocks
+	int warps_count;
 	if ((blockIdx.x + 1)*blockDim.x > inputSize)	// last block can enter here
 	{
 		warps_count = (inputSize - blockIdx.x*blockDim.x) / warpSize;
@@ -327,15 +327,15 @@ UINT* SharedMemWAH(int size, UINT* input)
 	int device = 0;
 	cudaDeviceProp deviceProp;
 	cudaGetDeviceProperties(&deviceProp, device);
-	//printf("SMs: %d\n", deviceProp.multiProcessorCount);
 
 	int numBlocksPerSm = 0;
-	//int numThreads = 128;
 	cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, SharedMemKernel, threads_per_block, 0);
-	printf("numBlocksPerSm: %d \n", numBlocksPerSm);
 
-	int warp_size = 32;
-	int warps_count = threads_per_block / warp_size;
+	int maxBlocks = deviceProp.multiProcessorCount * numBlocksPerSm;
+	printf("needed blocks: %d, max blocks: %d\n", blocks, maxBlocks);
+	//if ()
+
+	int warps_count = threads_per_block / deviceProp.warpSize;
 	size_t smem_size = MAX(sizeof(segment), sizeof(int));
 	smem_size = MAX(smem_size, sizeof(unsigned));
 	smem_size = smem_size * warps_count;

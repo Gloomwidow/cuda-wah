@@ -2,7 +2,7 @@
 #include <cstdio>
 
 
-__device__ WORD_TYPE get_word_type(UINT gulp)
+__host__ __device__ WORD_TYPE get_word_type(UINT gulp)
 {
 	if (is_zeros(gulp))
 		return EMPTY_WORD;

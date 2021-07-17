@@ -8,7 +8,7 @@ enum WORD_TYPE {
 	TAIL_WORD = 2
 };
 
-__device__ WORD_TYPE get_word_type(UINT gulp);
+__host__ __device__ WORD_TYPE get_word_type(UINT gulp);
 
 //gets i-th bit in int
 __host__ __device__ UINT get_bit(UINT src, int i);
