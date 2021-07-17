@@ -287,7 +287,63 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output)
 	}
 }
 
-void ensure_cooperativity_support()
+bool LaunchKernel(int blocks, int threads_per_block, UINT* d_input, int size, UINT* d_output)
+{
+	int device = 0;
+	cudaDeviceProp deviceProp;
+	CUDA_CHECK(cudaGetDeviceProperties(&deviceProp, device), Fail);
+
+	// calc size of needed shared memory
+	int warps_count = threads_per_block / deviceProp.warpSize;
+	if (threads_per_block % deviceProp.warpSize != 0)
+		warps_count++;
+	size_t smem_size = MAX(MAX(sizeof(segment), sizeof(int)), sizeof(unsigned));
+	smem_size = smem_size * warps_count;
+
+	// calc max number of blocks in coop. launch
+	int numBlocksPerSm = 0;
+	CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, SharedMemKernel, threads_per_block, smem_size), Fail);
+	int maxCoopBlocks = deviceProp.multiProcessorCount * numBlocksPerSm;
+	// printf("needed blocks: %d, max blocks: %d\n", blocks, maxCoopBlocks);
+	
+	
+	void* params[3];
+	params[0] = &d_input;
+	params[1] = &size;
+	params[2] = &d_output;
+	
+	if (blocks < maxCoopBlocks)
+	{
+		if (threads_per_block < blocks)	// insufficient number of threads_per_block to make cooperative scan on whole grid
+			return false;
+		CUDA_CHECK(cudaLaunchCooperativeKernel((void*)SharedMemKernel, blocks, threads_per_block, params, smem_size), Fail);
+		CUDA_CHECK(cudaGetLastError(), Fail);
+		CUDA_CHECK(cudaDeviceSynchronize(), Fail);
+	}
+	else
+		return false;
+	// else	// blocks >= maxCoopBlocks
+	// {
+	// 	if (threads_per_block < maxCoopBlocks)
+	// 		return false;
+
+	// 	// podzielić na części
+		
+	// 	// wywołać kernela dla każdej (blocks = maxCoopBlocks)
+	// 	// for (...)
+	// 	// 	cudaLaunchCooperativeKernel((void*)SharedMemKernel, maxCoopBlocks, threads_per_block, params, smem_size);
+
+	// 	// połączyć wyniki z każdego wywołania
+	// }
+
+	return true;
+
+Fail:
+	return false;
+}
+
+
+bool ensure_cooperativity_support()
 {
 	cudaDeviceProp deviceProp = { 0 };
 
@@ -298,14 +354,18 @@ void ensure_cooperativity_support()
 	if (!deviceProp.cooperativeLaunch)
 	{
 		printf("\nSelected GPU (%d) does not support Cooperative Kernel Launch, Waiving the run\n", device);
-		exit(EXIT_FAILURE);
+		return false;
 	}
+	return true;
+
 Finish:
+	return false;
 }
 
 UINT* SharedMemWAH(int size, UINT* input)
 {
-	ensure_cooperativity_support();
+	if (!ensure_cooperativity_support())
+		 return null;
 
 	UINT* result = nullptr;
 
@@ -320,35 +380,9 @@ UINT* SharedMemWAH(int size, UINT* input)
 	if (size % threads_per_block != 0)
 		blocks++;
 
-	// as many blocks as there are SMs can be launched safely
-	int device = 0;
-	cudaDeviceProp deviceProp;
-	cudaGetDeviceProperties(&deviceProp, device);
-
-	int numBlocksPerSm = 0;
-	cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, SharedMemKernel, threads_per_block, 0);
-
-	int maxBlocks = deviceProp.multiProcessorCount * numBlocksPerSm;
-	printf("needed blocks: %d, max blocks: %d\n", blocks, maxBlocks);
-	//if ()
-	// jeśli uruchamiana liczba bloków jest > liczba wątków w bloku, exit.
-
-	// calc size of needed shared memory
-	int warps_count = threads_per_block / deviceProp.warpSize;
-	if (threads_per_block % deviceProp.warpSize != 0)
-		warps_count++;
-	size_t smem_size = MAX(MAX(sizeof(segment), sizeof(int)), sizeof(unsigned));
-	smem_size = smem_size * warps_count;
-
 	//SharedMemKernel<<<blocks, threads_per_block>>>(d_input, size, d_output);
-	void* params[3];
-	params[0] = &d_input;
-	params[1] = &size;
-	params[2] = &d_output;
-	cudaLaunchCooperativeKernel((void*)SharedMemKernel, blocks, threads_per_block, params, smem_size);
-
-	CUDA_CHECK(cudaGetLastError(), Free);
-	CUDA_CHECK(cudaDeviceSynchronize(), Free);
+	if (!LaunchKernel(blocks, threads_per_block, d_input, size, d_output))
+		goto Free;
 
 	UINT* output = new UINT[size];
 	CUDA_CHECK(cudaMemcpy(output, d_output, size * sizeof(UINT), cudaMemcpyDeviceToHost), Free);
