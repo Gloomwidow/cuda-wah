@@ -10,15 +10,6 @@
 #define LOGGING_MAX 0
 #endif
 
-struct zero
-{
-	__host__ __device__
-		bool operator()(const int x)
-	{
-		return x == 0;
-	}
-};
-
 __global__ void ballot_warp_compress(UINT* input, UINT* output)
 {
     int global_id = blockIdx.x * blockDim.x + threadIdx.x;
@@ -151,6 +142,7 @@ __global__ void single_ballot_warp_compress(UINT* input, UINT* output)
 __global__ void ballot_warp_merge(int input_size, UINT* input, UINT* output)
 {
     int global_id = blockIdx.x * blockDim.x + threadIdx.x;
+
     UINT curr = input[global_id];
     output[global_id] = 0;
     bool checks_next = true;
@@ -171,7 +163,7 @@ __global__ void ballot_warp_merge(int input_size, UINT* input, UINT* output)
     if (checks_next)
     {
         UINT bit = get_bit(curr, 1);
-        int curr_output_pos = global_id;
+        int curr_output_pos = global_id;    // ???
         int pos = global_id + 1;
         UINT currAmount = compressed_count(curr);
         while (pos < input_size)
@@ -285,7 +277,7 @@ UINT* BallotSyncWAH(int data_size, UINT * d_input)
 
     cudaMemcpy(output, d_output, sizeof(UINT) * size, cudaMemcpyDeviceToHost);
 
-    UINT* end = thrust::remove_if(output, output + size, zero());
+    UINT* end = thrust::remove_if(output, output + size, wah_zero());
     int remove_count = end - output;
 
     if (size <= LOGGING_MAX)
@@ -304,7 +296,7 @@ UINT* BallotSyncWAH(int data_size, UINT * d_input)
 
     ballot_warp_merge <<<(remove_count / GPU_THREADS_COUNT)+1, GPU_THREADS_COUNT >> > (remove_count, d_input, d_output);
     cudaMemcpy(output, d_output, sizeof(UINT) * size, cudaMemcpyDeviceToHost);
-    UINT* final_end = thrust::remove_if(output, output + remove_count, zero());
+    UINT* final_end = thrust::remove_if(output, output + remove_count, wah_zero());
     if (size <= LOGGING_MAX)
     {
         printf("Sequence after global-compression:\n");
@@ -349,7 +341,7 @@ UINT* AtomicAddWAH(int data_size, UINT* d_input)
     atomic_sum_warp_merge << <(size / 32) + 1, 32 >> > (size, d_input, d_output);
     atomic_sum_warp_write << <(size / 32) + 1, 32 >> > (size, d_input, d_output);
     cudaMemcpy(output, d_output, sizeof(UINT) * size, cudaMemcpyDeviceToHost);
-    UINT* final_end = thrust::remove_if(output, output + size, zero());
+    UINT* final_end = thrust::remove_if(output, output + size, wah_zero());
     if (size <= LOGGING_MAX)
     {
         printf("Sequence after global-compression:\n");

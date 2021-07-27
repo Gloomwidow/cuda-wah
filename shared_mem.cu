@@ -86,7 +86,7 @@ __device__ void inclusive_scan_inblock_sync(int* value, void* smem_ptr, int lane
 		int n = __shfl_up_sync(FULL_MASK, *value, i);	// add width as argument???
 
 		if (lane_id >= i)
-			*value += n;
+			*value = *value + n;
 	}
 	if (warps_count == 1)
 		return;
@@ -114,9 +114,11 @@ __device__ void inclusive_scan_inblock_sync(int* value, void* smem_ptr, int lane
 	__syncthreads();
 
 	if (warp_id > 0)
-		*value += sums[warp_id - 1];
+		*value = *value + sums[warp_id - 1];
 	__syncthreads();
 }
+
+
 
 __device__ inline bool calc_segmentlen_ingrid_sync(int* segment_len, int* index, bool* is_begin, WORD_TYPE w_type, void* smem_ptr, void* output, int lane_id, int warp_id, int warps_count, cg::grid_group grid)
 {
@@ -158,6 +160,7 @@ __device__ inline bool calc_segmentlen_ingrid_sync(int* segment_len, int* index,
 	grid.sync();
 
 	bool* decrement_index = (bool*)smem_ptr;
+
 	if (threadIdx.x == 0)
 		*decrement_index = false;
 	__syncthreads();
@@ -176,7 +179,7 @@ __device__ inline bool calc_segmentlen_ingrid_sync(int* segment_len, int* index,
 			for (int i = blockIdx.x + 1; i < gridDim.x && block_segments[i].l_end_type == w_type; i++)
 			{
 				*segment_len = (*segment_len) + block_segments[i].l_end_len;		// check types
-				if (block_segments[i].l_end_len.x != blockDim.x)
+				if (block_segments[i].l_end_len != blockDim.x)
 					break;
 			}
 		}
@@ -186,6 +189,7 @@ __device__ inline bool calc_segmentlen_ingrid_sync(int* segment_len, int* index,
 		*index = (*index) - 1;
 	grid.sync();
 	return am_last_beginning_inblock;
+
 }
 
 
@@ -207,7 +211,9 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output, size_t
 	else
 		warps_count = blockDim.x / warpSize;
 
-	UINT gulp = input[thread_id];
+	UINT gulp;
+	if (thread_id < inputSize)
+		gulp = input[thread_id];
 	WORD_TYPE w_type = get_word_type(gulp);
 
 	// is this thread the beginning of a section?
@@ -219,24 +225,23 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output, size_t
 		if (lane_id == 0)
 			is_begin = true;
 	}
-	
+
 	int segment_len = get_segmentlen_inblock_sync(&is_begin, w_type, smem_ptr, lane_id, warp_id, warps_count);
 	// every thread-beginning knows its segment's length (in-block boundaries)
-
+	
 	int index = is_begin ? 1 : 0;
+	__syncthreads();
 	inclusive_scan_inblock_sync(&index, smem_ptr, lane_id, warp_id, warps_count);
 	// now index is correct in block boundaries
 
-	
 	// ================
 	// INTER-BLOCKS STEP
 	// ================
 	cg::grid_group grid = cg::this_grid();
 	bool am_last_beginning_inblock = calc_segmentlen_ingrid_sync(&segment_len, &index, &is_begin, w_type, smem_ptr, output, lane_id, warp_id, warps_count, grid);
-
 	// INTER-BLOCKS SCAN
 	// write block_sum to global memory
-	UINT* block_sums = output;
+	UINT* block_sums = output;		// TODO: possible to test. Allocate memory normally.
 	bool* has_last_beginning = (bool*)smem_ptr;
 	if (threadIdx.x == 0)
 		*has_last_beginning = false;
@@ -264,13 +269,13 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output, size_t
 	grid.sync();
 
 	inclusive_scan_inblock_sync(&block_sum, smem_ptr, lane_id, warp_id, warps_count);
-
 	if (thread_id < gridDim.x)
 		block_sums[thread_id] = block_sum;
 	grid.sync();
 
 	if (blockIdx.x > 0)
 		index += block_sums[blockIdx.x - 1];
+	grid.sync();
 
 	if (is_begin)
 	{
@@ -281,13 +286,13 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output, size_t
 		else
 			output[index - 1] = gulp;
 	}
-	if (thread_id == inputSize)
+	if (thread_id == inputSize-1)
 		*outputSize = index;
 }
 
 // return size of output array if everything successful
 // -1 else
-size_t LaunchKernel(int blocks, int threads_per_block, UINT* d_input, int size, UINT* d_output, size_t* d_outputSize)
+long long LaunchKernel(int blocks, int threads_per_block, UINT* d_input, int size, UINT* d_output, size_t* d_outputSize)
 {
 	int device = 0;
 	cudaDeviceProp deviceProp;
@@ -312,26 +317,33 @@ size_t LaunchKernel(int blocks, int threads_per_block, UINT* d_input, int size, 
 	
 	int maxGridSize = maxCoopBlocks * threads_per_block;
 	void* params[4];
-	params[0] = &d_input;
-	params[1] = &maxGridSize;
-	params[2] = &d_output;
-	params[3] = &d_outputSize;
 
-	size_t outputSize;
+	size_t outputSize = 0;
 	size_t size_left = size;
 	int blocks_left = blocks;
-	while (blocks > maxCoopBlocks)																		// if one coop. launch cannot handle the whole input, handle it in parts
+
+	UINT* d_outp = d_output;
+	UINT* d_inp = d_input;
+	params[0] = &d_inp;
+	params[1] = &maxGridSize;
+	params[2] = &d_outp;
+	params[3] = &d_outputSize;
+
+	// int noOfPacks = blocks / maxCoopBlocks;
+	// int x = 0;
+	// if (blocks % maxCoopBlocks != 0)
+	// 	noOfPacks++;
+	while (blocks_left > maxCoopBlocks)																		// if one coop. launch cannot handle the whole input, handle it in parts
 	{
 		CUDA_CHECK(cudaLaunchCooperativeKernel((void*)SharedMemKernel, maxCoopBlocks, threads_per_block, params, smem_size), Fail);
 		CUDA_CHECK(cudaGetLastError(), Fail);
 		CUDA_CHECK(cudaDeviceSynchronize(), Fail);
-
+		
 		size_t oSizeTmp;
-		CUDA_CHECK(cudaMemcpy(&oSizeTmp, *(params[3]), sizeof(size_t), cudaMemcpyDeviceToHost), Fail);
+		CUDA_CHECK(cudaMemcpy(&oSizeTmp, d_outputSize, sizeof(size_t), cudaMemcpyDeviceToHost), Fail);
 		// CUDA_CHECK(cudaMemcpy(outp_curr_ptr, *(params[2]), outputSize * sizeof(UINT), cudaMemcpyDeviceToHost), Fail);
-
-		params[0] += maxGridSize;
-		params[2] += oSizeTmp;
+		d_inp += maxGridSize;
+		d_outp += oSizeTmp;
 		outputSize += oSizeTmp;
 
 		blocks_left -= maxCoopBlocks;
@@ -339,17 +351,28 @@ size_t LaunchKernel(int blocks, int threads_per_block, UINT* d_input, int size, 
 	}
 	if (blocks_left > 0)																				// handle the rest of input
 	{
-		params[1] = size_left;
+		params[1] = &size_left;
 		CUDA_CHECK(cudaLaunchCooperativeKernel((void*)SharedMemKernel, blocks_left, threads_per_block, params, smem_size), Fail);
 		CUDA_CHECK(cudaGetLastError(), Fail);
 		CUDA_CHECK(cudaDeviceSynchronize(), Fail);
-
+		
 		size_t oSizeTmp;
-		CUDA_CHECK(cudaMemcpy(&oSizeTmp, *(params[3]), sizeof(size_t), cudaMemcpyDeviceToHost), Fail);
+		CUDA_CHECK(cudaMemcpy(&oSizeTmp, d_outputSize, sizeof(size_t), cudaMemcpyDeviceToHost), Fail);
 		outputSize += oSizeTmp;
 	}
 
-	return outputSize;
+	int threads_p_block = 512;
+	int blcks = outputSize / threads_p_block;
+	if (outputSize % threads_p_block != 0)
+		blcks++;
+    ballot_warp_merge<<<blcks, threads_p_block>>>(outputSize, d_output, d_input);						// join parts
+	CUDA_CHECK(cudaGetLastError(), Fail);
+	CUDA_CHECK(cudaDeviceSynchronize(), Fail);
+
+	UINT* final_end = thrust::remove_if(thrust::device, d_input, d_input + outputSize, wah_zero());		// remove leftover gaps
+	int final_count = final_end - d_input;
+
+	return final_count;
 
 Fail:
 	return -1;
@@ -384,7 +407,6 @@ UINT* SharedMemWAH(int size, UINT* input)
 	}
 	if (!ensure_cooperativity_support())
 		 return nullptr;
-
 		 
 	UINT* d_input;
 	UINT* d_output;
@@ -394,21 +416,20 @@ UINT* SharedMemWAH(int size, UINT* input)
 	CUDA_CHECK(cudaMalloc((void**)&d_outputSize, sizeof(size_t)), FreeOutput);
 	CUDA_CHECK(cudaMemcpy(d_input, input, size * sizeof(UINT), cudaMemcpyHostToDevice), Free);
 
-	int threads_per_block = 512;
+	int threads_per_block = 1024;
 	int blocks = size / threads_per_block;
 	if (size % threads_per_block != 0)
 		blocks++;
 
-	//SharedMemKernel<<<blocks, threads_per_block>>>(d_input, size, d_output, d_outputSize);
-	int outputSize = LaunchKernel(blocks, threads_per_block, d_input, size, d_output, d_outputSize);
+	// SharedMemKernel<<<blocks, threads_per_block>>>(d_input, size, d_output, d_outputSize);
+	long long outputSize = LaunchKernel(blocks, threads_per_block, d_input, size, d_output, d_outputSize);
 	if (outputSize < 0)
 	{
 		printf("something went wrong\n");
 		goto Free;
 	}
-
 	UINT* result = new UINT[outputSize];
-	CUDA_CHECK(cudaMemcpy(result, d_output, outputSize * sizeof(UINT), cudaMemcpyDeviceToHost), Free);
+	CUDA_CHECK(cudaMemcpy(result, d_input, outputSize * sizeof(UINT), cudaMemcpyDeviceToHost), Free);
 
 Free:
 	CUDA_CHECK(cudaFree(d_outputSize), FreeOutput);

@@ -336,7 +336,7 @@ void BigMerge(UINT* (*tested_function)(int, UINT*))
 	for (int i = 0; i < warps-2; i++)
 	{
 		int start = 32 * (i+1) - offset;
-		for (int j = start; j < length; j++)
+		for (int j = start; j < start+length; j++)
 		{
 			table[j] = 1;
 		}
@@ -434,9 +434,18 @@ void BigMultipleDifferentSequencesWithLiterals(UINT* (*tested_function)(int, UIN
 	int curr_length = 0;
 
 	UINT* table = new UINT[size];
+	printf("warps: %d\n", warps);
+	// printf("talica:\n");
 	for (int i = 0; i < size; i++)
 	{
+		// if (i%100 == 0)
+		// 	printf(" %d.\n", i);
 		table[i] = symbol;
+		// if (table[i] == 0)
+		// 	printf("0");
+		// else
+		// 	printf("X");
+		// printf("%d ", table[i]);
 		curr_length++;
 		if (curr_length == lengths[sel_l])
 		{
@@ -449,6 +458,7 @@ void BigMultipleDifferentSequencesWithLiterals(UINT* (*tested_function)(int, UIN
 	}
 
 	UINT* result = CpuWAH(size, table);
+
 	int test_result_size = last_wah_count;
 	Test(tested_function, size, table, test_result_size, result, "Big Multiple Different Sequences With Literals");
 	delete[] table;
