@@ -1,6 +1,4 @@
 /.vs
-*.sln
-*.vcxproj
 *.vcxproj.user
 *.pdb
 
@@ -21,7 +19,6 @@ bld/
 [Ll]ogs/
 bin/
 obj/
-/data/random.txt
 /data
 /results
 *.csv

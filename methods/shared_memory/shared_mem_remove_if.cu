@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
-#include "bit_functions.cuh"
+#include "../../bit_functions.cuh"
 
 //#define EMPTY_WORD	0
 //#define FULL_WORD	1

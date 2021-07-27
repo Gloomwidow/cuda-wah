@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
-#include "bit_functions.cuh"
+#include "../../bit_functions.cuh"
 
 #define MAX(a,b) (((a)>(b)) ? (a) : (b))
 
