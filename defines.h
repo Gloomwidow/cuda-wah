@@ -22,17 +22,13 @@
 #endif // !EMPTY_MASK
 
 #ifndef UNIT_TESTING
-#define UNIT_TESTING false
+#define UNIT_TESTING true
 #endif // !FULL_MASK
 
 //amount of threads in blocks
 #ifndef GPU_THREADS_COUNT
 #define GPU_THREADS_COUNT 32
 #endif // !FULL_MASK
-
-
-
-
 
 #ifndef CUDA_CHECK
 #define CUDA_CHECK(call, label)																		\

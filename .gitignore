@@ -25,3 +25,6 @@ obj/
 /data
 /results
 *.csv
+*.bat
+/file.txt
+/file2.txt

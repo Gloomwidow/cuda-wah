@@ -23,16 +23,6 @@ typedef struct segment {
 	uchar1 r_end_len;
 } segment;
 
-
-struct zero
-{
-	__host__ __device__
-		bool operator()(const int x)
-	{
-		return x == 0;
-	}
-};
-
 __global__ void SharedMemKernelBlocks(UINT* input, int inputSize, UINT* output)
 {
 	const int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
@@ -274,7 +264,7 @@ UINT* RemoveIfSharedMemWAH(int size, UINT* input)
 	CUDA_CHECK(cudaGetLastError(), Free);
 	CUDA_CHECK(cudaDeviceSynchronize(), Free);
 
-	UINT* end = thrust::remove_if(thrust::device, d_output, d_output + size, zero());
+	UINT* end = thrust::remove_if(thrust::device, d_output, d_output + size, wah_zero());
 
 	UINT* output = new UINT[size];
 	CUDA_CHECK(cudaMemcpy(output, d_output, size * sizeof(UINT), cudaMemcpyDeviceToHost), Free);

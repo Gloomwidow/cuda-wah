@@ -8,7 +8,7 @@ enum WORD_TYPE {
 	TAIL_WORD = 2
 };
 
-__device__ WORD_TYPE get_word_type(UINT gulp);
+__host__ __device__ WORD_TYPE get_word_type(UINT gulp);
 
 //gets i-th bit in int
 __host__ __device__ UINT get_bit(UINT src, int i);
@@ -37,3 +37,14 @@ __host__ __device__ UINT reverse(UINT src);
 __host__ __device__ UINT compressed_count(UINT src);
 
 void printBits(size_t const size, void const * const ptr);
+
+__global__ void ballot_warp_merge(int input_size, UINT* input, UINT* output);
+
+struct wah_zero
+{
+	__host__ __device__
+		bool operator()(const int x)
+	{
+		return x == 0;
+	}
+};

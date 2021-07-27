@@ -21,13 +21,12 @@ typedef std::chrono::duration<float> fsec;
 
 
 int main() {
-	//SharedMemWAH(nullptr);//, 2);
-   
     if (UNIT_TESTING)
     {
-        UnitTests(&BallotSyncWAH);
-        UnitTests(&AtomicAddWAH);
-		//UnitTests(&SharedMemWAH);
+        //UnitTests(&BallotSyncWAH);
+        //UnitTests(&AtomicAddWAH);
+	    UnitTests(&SharedMemWAH);
+        // printf("próba mikrofonu\n");
 		//UnitTests(&RemoveIfSharedMemWAH);
     }
     else
@@ -35,7 +34,7 @@ int main() {
         printf("Launching Warm Up Kernel...\n");
         WarmUp();
         printf("Starting tests data: ASCII texts\n");
-        CharTextBenchmark(50000000,"database.txt");
+        CharTextBenchmark(20000000, "database.txt");
     }
     return 0;
 }
@@ -45,8 +44,9 @@ void RunWithBatch(int batch_reserve, int batch_pos, int batch_size, std::string 
     UINT* d_data;
     cudaMalloc((UINT**)&d_data, sizeof(UINT) * batch_reserve);
     cudaMemcpy(d_data, data, sizeof(UINT) * batch_reserve, cudaMemcpyHostToDevice);
-    Benchmark(&BallotSyncWAH, batch_reserve, d_data, 1, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve*32) + ";" + "remove_if;"+std::to_string(GPU_THREADS_COUNT)+";" + std::to_string(batch_size) + ";", false);
-    Benchmark(&AtomicAddWAH, batch_reserve, d_data, 1, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve*32) + ";" +  "atomicAdd;"+std::to_string(GPU_THREADS_COUNT)+";" + std::to_string(batch_size) + ";", false);
+    //Benchmark(&BallotSyncWAH, batch_reserve, d_data, 1, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve*32) + ";" + "remove_if;"+std::to_string(GPU_THREADS_COUNT)+";" + std::to_string(batch_size) + ";", false);
+    //Benchmark(&AtomicAddWAH, batch_reserve, d_data, 1, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve*32) + ";" +  "atomicAdd;"+std::to_string(GPU_THREADS_COUNT)+";" + std::to_string(batch_size) + ";", false);
+    Benchmark(&SharedMemWAH, batch_reserve, d_data, 1, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "sharedMem;" + std::to_string(GPU_THREADS_COUNT) + ";" + std::to_string(batch_size) + ";", false);
     cudaFree(d_data);
 }
 
