@@ -1,4 +1,5 @@
 #include "cuda_runtime.h"
+#include <algorithm>
 #include "device_launch_parameters.h"
 #include "defines.h"
 #include "methods.h"
@@ -19,10 +20,10 @@ typedef std::chrono::high_resolution_clock Time;
 typedef std::chrono::duration<float> fsec;
 
 const int threads_tests_count = 1;
-const int threads_tests[1] = { 256 };
+const int threads_tests[1] = { 1024 };
 
 const int size_tests_count = 1;
-const long int size_tests[1] = { 1024 };
+const long int size_tests[1] = { 50000000 };
 
 //const int threads_tests_count = 6;
 //const int threads_tests[6] = { 32,64,128,256,512,1024 };
@@ -36,7 +37,7 @@ int main() {
         //UnitTests(&RemoveIfWAH);
         //UnitTests(&AtomicAddWAH);
 	    //UnitTests(&SharedMemWAH);
-	    UnitTests(&RemoveIfSharedMemWAH);
+	    //UnitTests(&RemoveIfSharedMemWAH);
         //UnitTests(&OptimizedRemoveIfWAH);
         //UnitTests(&OptimizedAtomicAddWAH);
     }
@@ -56,17 +57,54 @@ int main() {
     return 0;
 }
 
+
 void RunWithBatch(int batch_reserve, int batch_pos, int batch_size, int threads_per_block, std::string data_filename, UINT* data)
 {
     UINT* d_data;
     cudaMalloc((UINT**)&d_data, sizeof(UINT) * batch_reserve);
+
+    std::ofstream log("results_copy.csv", std::ios_base::app | std::ios_base::out);
+    cudaEvent_t start, stop;
+    float copy_time = 0;
+
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start);
+
     cudaMemcpy(d_data, data, sizeof(UINT) * batch_reserve, cudaMemcpyHostToDevice);
+
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    cudaEventElapsedTime(&copy_time, start, stop);
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+
+    std::string resultRow;
+    resultRow += data_filename;
+    resultRow += ";";
+    resultRow += std::to_string(batch_pos);
+    resultRow += ";";
+    std::string timeString = std::to_string(copy_time);
+    std::replace(timeString.begin(), timeString.end(), '.', ',');
+    resultRow += timeString;
+    resultRow += ";";
+    log << resultRow << std::endl;
+    log.close();
+
+
+
     Benchmark(&RemoveIfWAH, batch_reserve, d_data, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "remove_if;"+std::to_string(threads_per_block)+";" + std::to_string(batch_size) + ";", threads_per_block);
+    cudaMemcpy(d_data, data, sizeof(UINT) * batch_reserve, cudaMemcpyHostToDevice);
     Benchmark(&AtomicAddWAH, batch_reserve, d_data, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" +  "atomicAdd;"+std::to_string(threads_per_block)+";" + std::to_string(batch_size) + ";", threads_per_block);
+    cudaMemcpy(d_data, data, sizeof(UINT) * batch_reserve, cudaMemcpyHostToDevice);
     Benchmark(&OptimizedRemoveIfWAH, batch_reserve, d_data, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "optimized_remove_if;" + std::to_string(threads_per_block) + ";" + std::to_string(batch_size) + ";", threads_per_block);
+    cudaMemcpy(d_data, data, sizeof(UINT) * batch_reserve, cudaMemcpyHostToDevice);
     Benchmark(&OptimizedAtomicAddWAH, batch_reserve, d_data, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "optimized_atomicAdd;" + std::to_string(threads_per_block) + ";" + std::to_string(batch_size) + ";", threads_per_block);
-    //Benchmark(&SharedMemWAH, batch_reserve, d_data, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "sharedMem;" + std::to_string(threads_per_block) + ";" + std::to_string(batch_size) + ";", threads_per_block);
-    //Benchmark(&RemoveIfSharedMemWAH, batch_reserve, d_data, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "removeIfSharedMem;" + std::to_string(threads_per_block) + ";" + std::to_string(batch_size) + ";", threads_per_block);
+    //cudaMemcpy(d_data, data, sizeof(UINT) * batch_reserve, cudaMemcpyHostToDevice);
+    //TODO: change data to d_data, ensure that SharedMemWAH doesn't copy input, and uncomment line above
+    Benchmark(&SharedMemWAH, batch_reserve, data, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "sharedMem;" + std::to_string(threads_per_block) + ";" + std::to_string(batch_size) + ";", threads_per_block);
+    
    
     cudaFree(d_data);
 }

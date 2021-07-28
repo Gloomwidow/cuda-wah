@@ -1,4 +1,5 @@
 #include "wah_test.h"
+#include <algorithm>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include "bit_functions.cuh"
@@ -148,9 +149,11 @@ void Benchmark(UINT* (*tested_function)(int, UINT*, int), int data_size, UINT* d
 	std::string resultRow;
 	resultRow += bench_name;
 	resultRow += ";";
-	resultRow += std::to_string(double(data_size*32/exec_time));
+	resultRow += std::to_string(int(data_size * 32 / exec_time));
 	resultRow += ";";
-	resultRow += std::to_string(exec_time);
+	std::string timeString = std::to_string(exec_time);
+	std::replace(timeString.begin(), timeString.end(), '.', ',');
+	resultRow += timeString;
 	resultRow += ";";
 	log << resultRow << std::endl;
 	delete[] result;

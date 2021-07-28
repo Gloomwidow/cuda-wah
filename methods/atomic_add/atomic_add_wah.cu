@@ -273,7 +273,7 @@ UINT* AtomicAddWAH(int data_size, UINT* d_input, int threads_per_block)
         }
         printf("\n");
     }
-    cudaFree(d_input);
+    //cudaFree(d_input);
     cudaFree(d_output);
     return output;
 }
@@ -294,7 +294,7 @@ UINT* OptimizedAtomicAddWAH(int data_size, UINT* d_input, int threads_per_block)
 
     UINT* final_end = thrust::remove_if(thrust::device, d_output, d_output + size, wah_zero());
     cudaMemcpy(output, d_output, sizeof(UINT) * size, cudaMemcpyDeviceToHost);
-    cudaFree(d_input);
+    //cudaFree(d_input);
     cudaFree(d_output);
     return output;
 }

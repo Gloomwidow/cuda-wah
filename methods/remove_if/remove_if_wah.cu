@@ -198,7 +198,7 @@ UINT* RemoveIfWAH(int data_size, UINT * d_input, int threads_per_block)
         }
         printf("\n");
     }
-    cudaFree(d_input);
+    //cudaFree(d_input);
     cudaFree(d_output);
     return output;
 }
@@ -223,7 +223,7 @@ UINT* OptimizedRemoveIfWAH(int data_size, UINT* d_input, int threads_per_block)
 
     cudaMemcpy(output, d_input, sizeof(UINT) * final_count, cudaMemcpyDeviceToHost);
 
-    cudaFree(d_input);
+    //cudaFree(d_input);
     cudaFree(d_output);
     return output;
 }

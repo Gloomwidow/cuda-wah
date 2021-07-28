@@ -22,7 +22,7 @@
 #endif // !EMPTY_MASK
 
 #ifndef UNIT_TESTING
-#define UNIT_TESTING true
+#define UNIT_TESTING false
 #endif // !FULL_MASK
 
 #ifndef CUDA_CHECK

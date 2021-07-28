@@ -15,7 +15,6 @@
     <CudaCompile Include="methods\atomic_add\atomic_add_wah.cu" />
     <CudaCompile Include="methods\remove_if\remove_if_wah.cu" />
     <CudaCompile Include="methods\shared_memory\shared_mem.cu" />
-    <CudaCompile Include="methods\shared_memory\shared_mem_remove_if.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
