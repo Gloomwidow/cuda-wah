@@ -34,9 +34,9 @@ __device__ int get_segmentlen_inblock_sync(bool* is_begin, WORD_TYPE w_type, voi
 		if (segment_len == 0)	// the last thread-beginning in warp
 		{
 			am_last_beginning_inwarp = true;
-			segment_len = (warp_id < warps_count - 1) ? (warpSize - lane_id) : (warps_count*warpSize - threadIdx.x);
-																										// considers case of the last thread-beginning in the last warp in block
-																										// when inputSize is not divisible by 32
+			segment_len = (warp_id < warps_count - 1) ? (warpSize - lane_id) : (warps_count * warpSize - threadIdx.x);
+			// considers case of the last thread-beginning in the last warp in block
+			// when inputSize is not divisible by 32
 			segments[warp_id].r_end_type = w_type;
 			segments[warp_id].r_end_len = segment_len;
 		}
@@ -202,9 +202,9 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output, size_t
 	const int lane_id = threadIdx.x % warpSize;
 	const int warp_id = threadIdx.x / warpSize;
 	int warps_count;
-	if ((blockIdx.x + 1)*blockDim.x > inputSize)	// last block can enter here
+	if ((blockIdx.x + 1) * blockDim.x > inputSize)	// last block can enter here
 	{
-		warps_count = (inputSize - blockIdx.x*blockDim.x) / warpSize;
+		warps_count = (inputSize - blockIdx.x * blockDim.x) / warpSize;
 		if (inputSize % warpSize != 0)
 			warps_count++;
 	}
@@ -228,7 +228,7 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output, size_t
 
 	int segment_len = get_segmentlen_inblock_sync(&is_begin, w_type, smem_ptr, lane_id, warp_id, warps_count);
 	// every thread-beginning knows its segment's length (in-block boundaries)
-	
+
 	int index = is_begin ? 1 : 0;
 	__syncthreads();
 	inclusive_scan_inblock_sync(&index, smem_ptr, lane_id, warp_id, warps_count);
@@ -286,7 +286,7 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output, size_t
 		else
 			output[index - 1] = gulp;
 	}
-	if (thread_id == inputSize-1)
+	if (thread_id == inputSize - 1)
 		*outputSize = index;
 }
 
@@ -314,7 +314,7 @@ long long LaunchKernel(int blocks, int threads_per_block, UINT* d_input, int siz
 		printf("insufficient number of threads_per_block to make cooperative scan on whole grid\n");	// this can only happen when GPU has very many of SMs
 		return -1;																						// (or more precisely: cooperative launch can handle many blocks)
 	}																									// and blockSize is smaller than that
-	
+
 	int maxGridSize = maxCoopBlocks * threads_per_block;
 	void* params[4];
 
@@ -338,7 +338,7 @@ long long LaunchKernel(int blocks, int threads_per_block, UINT* d_input, int siz
 		CUDA_CHECK(cudaLaunchCooperativeKernel((void*)SharedMemKernel, maxCoopBlocks, threads_per_block, params, smem_size), Fail);
 		CUDA_CHECK(cudaGetLastError(), Fail);
 		CUDA_CHECK(cudaDeviceSynchronize(), Fail);
-		
+
 		size_t oSizeTmp;
 		CUDA_CHECK(cudaMemcpy(&oSizeTmp, d_outputSize, sizeof(size_t), cudaMemcpyDeviceToHost), Fail);
 		// CUDA_CHECK(cudaMemcpy(outp_curr_ptr, *(params[2]), outputSize * sizeof(UINT), cudaMemcpyDeviceToHost), Fail);
@@ -355,7 +355,7 @@ long long LaunchKernel(int blocks, int threads_per_block, UINT* d_input, int siz
 		CUDA_CHECK(cudaLaunchCooperativeKernel((void*)SharedMemKernel, blocks_left, threads_per_block, params, smem_size), Fail);
 		CUDA_CHECK(cudaGetLastError(), Fail);
 		CUDA_CHECK(cudaDeviceSynchronize(), Fail);
-		
+
 		size_t oSizeTmp;
 		CUDA_CHECK(cudaMemcpy(&oSizeTmp, d_outputSize, sizeof(size_t), cudaMemcpyDeviceToHost), Fail);
 		outputSize += oSizeTmp;
@@ -365,7 +365,7 @@ long long LaunchKernel(int blocks, int threads_per_block, UINT* d_input, int siz
 	int blcks = outputSize / threads_p_block;
 	if (outputSize % threads_p_block != 0)
 		blcks++;
-    ballot_warp_merge<<<blcks, threads_p_block>>>(outputSize, d_output, d_input);						// join parts
+	ballot_warp_merge << <blcks, threads_p_block >> > (outputSize, d_output, d_input);						// join parts
 	CUDA_CHECK(cudaGetLastError(), Fail);
 	CUDA_CHECK(cudaDeviceSynchronize(), Fail);
 
@@ -398,7 +398,7 @@ Finish:
 	return false;
 }
 
-UINT* SharedMemWAH(int size, UINT* input)
+UINT* SharedMemWAH(int size, UINT* input, int __threads_per_block)
 {
 	if (size < 1 || input == nullptr)
 	{
@@ -406,8 +406,8 @@ UINT* SharedMemWAH(int size, UINT* input)
 		return nullptr;
 	}
 	if (!ensure_cooperativity_support())
-		 return nullptr;
-		 
+		return nullptr;
+
 	UINT* d_input;
 	UINT* d_output;
 	size_t* d_outputSize;

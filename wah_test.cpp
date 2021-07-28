@@ -9,6 +9,7 @@
 #define MISMATCH_MAX 20
 
 int last_wah_count = 0;
+int tests_threads_per_block = 128;
 
 UINT* CpuWAH(int data_size,UINT* data)
 {
@@ -80,7 +81,7 @@ UINT* CpuWAH(int data_size,UINT* data)
 	return ret;
 }
 
-void Test(UINT* (*tested_function)(int,UINT*),int data_size, UINT* data, int expected_size, UINT* expected, std::string test_name)
+void Test(UINT* (*tested_function)(int,UINT*,int),int data_size, UINT* data, int expected_size, UINT* expected, std::string test_name)
 {
 	int dsize = data_size;
 	UINT* d_data;
@@ -89,7 +90,7 @@ void Test(UINT* (*tested_function)(int,UINT*),int data_size, UINT* data, int exp
 
 	printf("TEST '%s' - Input Size: %u \n", test_name.c_str(), dsize);
 	printf("=======================================================\n");
-	UINT* actual = tested_function(dsize,d_data);
+	UINT* actual = tested_function(dsize, d_data, tests_threads_per_block);
 	printf("=======================================================\n");
 	cudaFree(d_data);
 	if (actual == nullptr)
@@ -119,53 +120,47 @@ void Test(UINT* (*tested_function)(int,UINT*),int data_size, UINT* data, int exp
 }
 
 
-void Benchmark(UINT* (*benchmark_function)(int,UINT*), int data_size, UINT* d_data, int repeats, std::string bench_name, bool print_times)
+void Benchmark(UINT* (*tested_function)(int, UINT*, int), int data_size, UINT* d_data, std::string bench_name, int threads_per_block)
 {
 	int size = data_size;
 
-	std::ofstream log("results_"+std::to_string(GPU_THREADS_COUNT)+".csv", std::ios_base::app | std::ios_base::out);
-	//printf("BENCHMARK '%s' - Input Size: %u \n", bench_name.c_str(), size);
+	std::ofstream log("results_"+std::to_string(threads_per_block)+".csv", std::ios_base::app | std::ios_base::out);
 
 	cudaEvent_t start, stop;
 	float max = -1;
 	float mean = 0;
-	float min = 0;
-	for (int i = 0; i < repeats; i++)
-	{
-		cudaEventCreate(&start);
-		cudaEventCreate(&stop);
-		cudaEventRecord(start);
-		//if(size<=64) printf("=======================================================\n");
-		UINT * result = benchmark_function(size,d_data);
-		//if(size<=64) printf("=======================================================\n");
-		cudaEventRecord(stop);
-		cudaEventSynchronize(stop);
-		float exec_time = 0;
-		cudaEventElapsedTime(&exec_time, start, stop);
-		cudaEventDestroy(start);
-		cudaEventDestroy(stop);
-		exec_time /= 1000;
-		if(print_times) printf("RUN %d: %f\n", i+1 , exec_time );
-		std::string resultRow;
-		resultRow += bench_name;
-		resultRow += ";";
-		resultRow += std::to_string(data_size*32);
-		resultRow += ";";
-		resultRow += std::to_string(exec_time);
-		resultRow += ";";
-		log << resultRow << std::endl;
-		if (max < exec_time) max = exec_time;
-		if (i == 0 || min > exec_time) min = exec_time;
-		mean += exec_time;
-		delete[] result;
-	}
+	float min = 0; 
+	float exec_time = 0;
+
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+	cudaEventRecord(start);
+
+	UINT * result = tested_function(size,d_data,threads_per_block);
+
+	cudaEventRecord(stop);
+	cudaEventSynchronize(stop);
+
+	cudaEventElapsedTime(&exec_time, start, stop);
+	cudaEventDestroy(start);
+	cudaEventDestroy(stop);
+	exec_time /= 1000;
+	std::string resultRow;
+	resultRow += bench_name;
+	resultRow += ";";
+	resultRow += std::to_string(double(data_size*32/exec_time));
+	resultRow += ";";
+	resultRow += std::to_string(exec_time);
+	resultRow += ";";
+	log << resultRow << std::endl;
+	delete[] result;
+
 	log.close();
-	//printf("MIN: %fs | MEAN: %fs | MAX: %fs \n", min, mean / repeats, max);
 }
 
 
 
-void NoCompressTest(UINT* (*tested_function)(int, UINT*))
+void NoCompressTest(UINT* (*tested_function)(int, UINT*, int))
 {
 	int size = 64;
 	UINT* table = new UINT[size];
@@ -177,7 +172,7 @@ void NoCompressTest(UINT* (*tested_function)(int, UINT*))
 	delete[] table;
 }
 
-void AllCompressTest(UINT* (*tested_function)(int, UINT*))
+void AllCompressTest(UINT* (*tested_function)(int, UINT*, int))
 {
 	int size = 32;
 	UINT* table = new UINT[size];
@@ -192,7 +187,7 @@ void AllCompressTest(UINT* (*tested_function)(int, UINT*))
 	delete[] result;
 }
 
-void BetweenWarpsMerge(UINT* (*tested_function)(int, UINT*))
+void BetweenWarpsMerge(UINT* (*tested_function)(int, UINT*, int))
 {
 	int size = 64;
 	UINT* table = new UINT[size];
@@ -212,7 +207,7 @@ void BetweenWarpsMerge(UINT* (*tested_function)(int, UINT*))
 	delete[] result;
 }
 
-void MixedCompressions(UINT* (*tested_function)(int, UINT*))
+void MixedCompressions(UINT* (*tested_function)(int, UINT*, int))
 {
 	int size = 64;
 	UINT* table = new UINT[size];
@@ -231,7 +226,7 @@ void MixedCompressions(UINT* (*tested_function)(int, UINT*))
 	delete[] result;
 }
 
-void MixedCompressionWithLiterals(UINT* (*tested_function)(int, UINT*))
+void MixedCompressionWithLiterals(UINT* (*tested_function)(int, UINT*, int))
 {
 	int size = 32;
 	UINT* table = new UINT[size];
@@ -261,7 +256,7 @@ void MixedCompressionWithLiterals(UINT* (*tested_function)(int, UINT*))
 	delete[] result;
 }
 
-void AllVariants_1(UINT* (*tested_function)(int, UINT*))
+void AllVariants_1(UINT* (*tested_function)(int, UINT*, int))
 {
 	int size = 64;
 	UINT* table = new UINT[size];
@@ -303,7 +298,7 @@ void AllVariants_1(UINT* (*tested_function)(int, UINT*))
 	delete[] result;
 }
 
-void MultipleWarpsMerge(UINT* (*tested_function)(int, UINT*))
+void MultipleWarpsMerge(UINT* (*tested_function)(int, UINT*, int))
 {
 	int size = 32*10;
 	UINT* table = new UINT[size];
@@ -322,7 +317,7 @@ void MultipleWarpsMerge(UINT* (*tested_function)(int, UINT*))
 	delete[] result;
 }
 
-void BigMerge(UINT* (*tested_function)(int, UINT*))
+void BigMerge(UINT* (*tested_function)(int, UINT*, int))
 {
 	int offset = 5;
 	int length = 12;
@@ -348,7 +343,7 @@ void BigMerge(UINT* (*tested_function)(int, UINT*))
 	delete[] result;
 }
 
-void BigMergeWithInterrupts(UINT* (*tested_function)(int, UINT*))
+void BigMergeWithInterrupts(UINT* (*tested_function)(int, UINT*, int))
 {
 	int warps = 512;
 	int size = 32 * warps;
@@ -370,7 +365,7 @@ void BigMergeWithInterrupts(UINT* (*tested_function)(int, UINT*))
 	delete[] result;
 }
 
-void BigNoMerging(UINT* (*tested_function)(int, UINT*))
+void BigNoMerging(UINT* (*tested_function)(int, UINT*, int))
 {
 	int warps = 512;
 	int size = 32 * warps;
@@ -392,7 +387,7 @@ void BigNoMerging(UINT* (*tested_function)(int, UINT*))
 	delete[] result;
 }
 
-void BigMultipleDifferentSequences(UINT* (*tested_function)(int, UINT*))
+void BigMultipleDifferentSequences(UINT* (*tested_function)(int, UINT*, int))
 {
 	int warps = 512;
 	int size = 32 * warps;
@@ -423,7 +418,7 @@ void BigMultipleDifferentSequences(UINT* (*tested_function)(int, UINT*))
 	delete[] result;
 }
 
-void BigMultipleDifferentSequencesWithLiterals(UINT* (*tested_function)(int, UINT*))
+void BigMultipleDifferentSequencesWithLiterals(UINT* (*tested_function)(int, UINT*, int))
 {
 	int warps = 1024;
 	int size = 32 * warps;
@@ -434,18 +429,9 @@ void BigMultipleDifferentSequencesWithLiterals(UINT* (*tested_function)(int, UIN
 	int curr_length = 0;
 
 	UINT* table = new UINT[size];
-	printf("warps: %d\n", warps);
-	// printf("talica:\n");
 	for (int i = 0; i < size; i++)
 	{
-		// if (i%100 == 0)
-		// 	printf(" %d.\n", i);
 		table[i] = symbol;
-		// if (table[i] == 0)
-		// 	printf("0");
-		// else
-		// 	printf("X");
-		// printf("%d ", table[i]);
 		curr_length++;
 		if (curr_length == lengths[sel_l])
 		{
@@ -465,7 +451,7 @@ void BigMultipleDifferentSequencesWithLiterals(UINT* (*tested_function)(int, UIN
 	delete[] result;
 }
 
-void BigScarceSequences(UINT* (*tested_function)(int, UINT*))
+void BigScarceSequences(UINT* (*tested_function)(int, UINT*, int))
 {
 	int warps = 1024;
 	int size = 32 * warps;
@@ -512,7 +498,7 @@ void BigScarceSequences(UINT* (*tested_function)(int, UINT*))
 	delete[] result;
 }
 
-void UnitTests(UINT* (*tested_function)(int, UINT*))
+void UnitTests(UINT* (*tested_function)(int, UINT*, int))
 {
 	printf("Performing unit tests...\n");
 	NoCompressTest(tested_function);

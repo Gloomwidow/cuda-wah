@@ -25,11 +25,6 @@
 #define UNIT_TESTING true
 #endif // !FULL_MASK
 
-//amount of threads in blocks
-#ifndef GPU_THREADS_COUNT
-#define GPU_THREADS_COUNT 32
-#endif // !FULL_MASK
-
 #ifndef CUDA_CHECK
 #define CUDA_CHECK(call, label)																		\
 {																									\
@@ -41,3 +36,8 @@
 	}																								\
 }
 #endif // !CUDA_CHECK
+
+//maximum input for logging (atomic add and remove if wah)
+#ifndef LOGGING_MAX
+#define LOGGING_MAX 0
+#endif

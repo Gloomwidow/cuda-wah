@@ -28,7 +28,6 @@ __host__ __device__ UINT clear_bit(UINT src, int i)
 	return src;
 }
 
-
 __host__ __device__ bool is_zeros(UINT src)
 {
 	return src == 0;
@@ -59,6 +58,11 @@ __host__ __device__ UINT reverse(UINT src)
 		if (temp) reverse_num |= (1 << ((NO_OF_BITS - 1) - i));
 	}
 	return reverse_num;
+}
+
+__host__ __device__ UINT get_reversed_bit(UINT src, int bitNo)
+{
+	return get_bit(src, 31 - bitNo);
 }
 
 //returns amount of sequences compressed in src block

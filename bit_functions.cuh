@@ -33,6 +33,8 @@ __host__ __device__ UINT get_compressed(UINT n, int bit);
 
 __host__ __device__ UINT reverse(UINT src);
 
+__host__ __device__ UINT get_reversed_bit(UINT src, int bitNo);
+
 //returns amount of sequences compressed in src block
 __host__ __device__ UINT compressed_count(UINT src);
 

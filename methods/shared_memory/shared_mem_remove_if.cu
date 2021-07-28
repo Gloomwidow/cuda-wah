@@ -238,7 +238,7 @@ __global__ void SharedMemKernelBlocks(UINT* input, int inputSize, UINT* output)
 
 }
 
-UINT* RemoveIfSharedMemWAH(int size, UINT* input)
+UINT* RemoveIfSharedMemWAH(int size, UINT* input, int __threads_per_block)
 {
 
 	UINT* result = nullptr;

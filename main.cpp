@@ -1,6 +1,5 @@
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
-#include "ZerosGenerator.h"
 #include "defines.h"
 #include "methods.h"
 #include "wah_test.h"
@@ -15,42 +14,64 @@
 #include "bit_functions.cuh"
 
 
-void CharTextBenchmark(long int batch_char_size, std::string data_filename);
+void TextFileBenchmark(long int batch_char_size, std::string data_filename);
 typedef std::chrono::high_resolution_clock Time;
 typedef std::chrono::duration<float> fsec;
+
+const int threads_tests_count = 1;
+const int threads_tests[1] = { 256 };
+
+const int size_tests_count = 1;
+const long int size_tests[1] = { 1024 };
+
+//const int threads_tests_count = 6;
+//const int threads_tests[6] = { 32,64,128,256,512,1024 };
+//const int size_tests_count = 4;
+//const long int size_tests[4] = { 2000000, 5000000, 10000000, 2000000};
 
 
 int main() {
     if (UNIT_TESTING)
     {
-        //UnitTests(&BallotSyncWAH);
+        //UnitTests(&RemoveIfWAH);
         //UnitTests(&AtomicAddWAH);
-	    UnitTests(&SharedMemWAH);
-        // printf("próba mikrofonu\n");
-		//UnitTests(&RemoveIfSharedMemWAH);
+	    //UnitTests(&SharedMemWAH);
+	    UnitTests(&RemoveIfSharedMemWAH);
+        //UnitTests(&OptimizedRemoveIfWAH);
+        //UnitTests(&OptimizedAtomicAddWAH);
     }
     else
     {
         printf("Launching Warm Up Kernel...\n");
         WarmUp();
         printf("Starting tests data: ASCII texts\n");
-        CharTextBenchmark(20000000, "database.txt");
+        for (int i = 0; i < size_tests_count; i++)
+        {
+            TextFileBenchmark(size_tests[i], "random.txt");
+            TextFileBenchmark(size_tests[i], "database.txt");
+            TextFileBenchmark(size_tests[i], "sinus.txt");
+            TextFileBenchmark(size_tests[i], "morse.txt");
+        }
     }
     return 0;
 }
 
-void RunWithBatch(int batch_reserve, int batch_pos, int batch_size, std::string data_filename, UINT* data)
+void RunWithBatch(int batch_reserve, int batch_pos, int batch_size, int threads_per_block, std::string data_filename, UINT* data)
 {
     UINT* d_data;
     cudaMalloc((UINT**)&d_data, sizeof(UINT) * batch_reserve);
     cudaMemcpy(d_data, data, sizeof(UINT) * batch_reserve, cudaMemcpyHostToDevice);
-    //Benchmark(&BallotSyncWAH, batch_reserve, d_data, 1, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve*32) + ";" + "remove_if;"+std::to_string(GPU_THREADS_COUNT)+";" + std::to_string(batch_size) + ";", false);
-    //Benchmark(&AtomicAddWAH, batch_reserve, d_data, 1, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve*32) + ";" +  "atomicAdd;"+std::to_string(GPU_THREADS_COUNT)+";" + std::to_string(batch_size) + ";", false);
-    Benchmark(&SharedMemWAH, batch_reserve, d_data, 1, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "sharedMem;" + std::to_string(GPU_THREADS_COUNT) + ";" + std::to_string(batch_size) + ";", false);
+    Benchmark(&RemoveIfWAH, batch_reserve, d_data, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "remove_if;"+std::to_string(threads_per_block)+";" + std::to_string(batch_size) + ";", threads_per_block);
+    Benchmark(&AtomicAddWAH, batch_reserve, d_data, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" +  "atomicAdd;"+std::to_string(threads_per_block)+";" + std::to_string(batch_size) + ";", threads_per_block);
+    Benchmark(&OptimizedRemoveIfWAH, batch_reserve, d_data, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "optimized_remove_if;" + std::to_string(threads_per_block) + ";" + std::to_string(batch_size) + ";", threads_per_block);
+    Benchmark(&OptimizedAtomicAddWAH, batch_reserve, d_data, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "optimized_atomicAdd;" + std::to_string(threads_per_block) + ";" + std::to_string(batch_size) + ";", threads_per_block);
+    //Benchmark(&SharedMemWAH, batch_reserve, d_data, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "sharedMem;" + std::to_string(threads_per_block) + ";" + std::to_string(batch_size) + ";", threads_per_block);
+    //Benchmark(&RemoveIfSharedMemWAH, batch_reserve, d_data, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "removeIfSharedMem;" + std::to_string(threads_per_block) + ";" + std::to_string(batch_size) + ";", threads_per_block);
+   
     cudaFree(d_data);
 }
 
-void CharTextBenchmark(long int batch_char_size, std::string data_filename)
+void TextFileBenchmark(long int batch_char_size, std::string data_filename)
 {
 
     std::ofstream log("results_load.csv", std::ios_base::app | std::ios_base::out);
@@ -105,7 +126,10 @@ void CharTextBenchmark(long int batch_char_size, std::string data_filename)
         fsec fs = end - start; 
         log << data_filename + ";" + std::to_string(batch_part_index) + ";" + std::to_string(batch_bit_size) + ";" + std::to_string(fs.count()) + ";"<<std::endl;
         printf("Batch %d load done...\n", batch_part_index + 1);
-        RunWithBatch(batch_int_count, batch_part_index, batch_bit_size, data_filename, data);
+        for (int i = 0; i < threads_tests_count; i++)
+        {
+            RunWithBatch(batch_int_count, batch_part_index, batch_bit_size, threads_tests[i], data_filename, data);
+        }
         printf("Batch %d CUDA done...\n", batch_part_index + 1);
         batch_part_index++;
         curr_char = 0;
@@ -124,7 +148,10 @@ void CharTextBenchmark(long int batch_char_size, std::string data_filename)
     fsec fs = end - start;
     log << data_filename + ";" + std::to_string(batch_part_index) + ";" + std::to_string(batch_bit_size) + ";" + std::to_string(fs.count()) + ";" << std::endl;
     printf("Batch %d load done...\n", batch_part_index + 1);
-    RunWithBatch(batch_int_count, batch_part_index, batch_bit_size, data_filename, data);
+    for (int i = 0; i < threads_tests_count; i++)
+    {
+        RunWithBatch(batch_int_count, batch_part_index, batch_bit_size, threads_tests[i], data_filename, data);
+    }
     printf("Batch %d CUDA done...\n", batch_part_index + 1);
     batch_part_index++;
     curr_char = 0;
