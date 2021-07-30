@@ -28,7 +28,7 @@ __device__ int get_segmentlen_inblock_sync(bool* is_begin, WORD_TYPE w_type, voi
 	unsigned warp_begins_mask = __ballot_sync(FULL_MASK, *is_begin);
 	int segment_len = 0;
 	if (*is_begin)
-	{																									// find ID of the next thread-beginning and thus the length of the section
+	{																									// find ID of the next thread-beginning and thus the length of the segment
 		segment_len = (lane_id == warpSize - 1) ? 0 : __ffs(warp_begins_mask >> (lane_id + 1));			// note: bit shift "(int) >> 32" is not defined
 																										// note: __ffs(0) = 0
 		if (segment_len == 0)	// the last thread-beginning in warp
@@ -118,8 +118,6 @@ __device__ void inclusive_scan_inblock_sync(int* value, void* smem_ptr, int lane
 	__syncthreads();
 }
 
-
-
 __device__ inline bool calc_segmentlen_ingrid_sync(int* segment_len, int* index, bool* is_begin, WORD_TYPE w_type, void* smem_ptr, void* output, int lane_id, int warp_id, int warps_count, cg::grid_group grid)
 {
 	segment* block_segments = (segment*)output;															// this allocation is just being reused
@@ -192,7 +190,6 @@ __device__ inline bool calc_segmentlen_ingrid_sync(int* segment_len, int* index,
 
 }
 
-
 // kernel assumes that grid is 1D
 __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output, size_t* outputSize)
 {
@@ -216,8 +213,7 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output, size_t
 		gulp = input[thread_id];
 	WORD_TYPE w_type = get_word_type(gulp);
 
-	// is this thread the beginning of a section?
-	bool is_begin = false;
+	bool is_begin = false; 	// is this thread the beginning of a section?
 	char prev_type = __shfl_up_sync(FULL_MASK, w_type, 1);
 	if (thread_id < inputSize)
 	{
@@ -239,10 +235,10 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output, size_t
 	// ================
 	cg::grid_group grid = cg::this_grid();
 	bool am_last_beginning_inblock = calc_segmentlen_ingrid_sync(&segment_len, &index, &is_begin, w_type, smem_ptr, output, lane_id, warp_id, warps_count, grid);
+	
 	// INTER-BLOCKS SCAN
-	// write block_sum to global memory
 	UINT* block_sums = output;		// TODO: possible to test. Allocate memory normally.
-	bool* has_last_beginning = (bool*)smem_ptr;
+	bool* has_last_beginning = (bool*)smem_ptr;															// write block_sum to global memory
 	if (threadIdx.x == 0)
 		*has_last_beginning = false;
 	__syncthreads();
@@ -277,6 +273,7 @@ __global__ void SharedMemKernel(UINT* input, int inputSize, UINT* output, size_t
 		index += block_sums[blockIdx.x - 1];
 	grid.sync();
 
+	// WRITE COMPRESSED
 	if (is_begin)
 	{
 		if (w_type == EMPTY_WORD)
