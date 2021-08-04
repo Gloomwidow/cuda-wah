@@ -14,6 +14,9 @@
     <CudaCompile Include="bit_functions.cu" />
     <CudaCompile Include="methods\atomic_add\atomic_add_wah.cu" />
     <CudaCompile Include="methods\remove_if\remove_if_wah.cu" />
+    <CudaCompile Include="methods\shared_memory\calc_segmentlen_ingrid.cu" />
+    <CudaCompile Include="methods\shared_memory\get_segmentlen_inblock.cu" />
+    <CudaCompile Include="methods\shared_memory\scan_inblock.cu" />
     <CudaCompile Include="methods\shared_memory\shared_mem.cu" />
   </ItemGroup>
   <ItemGroup>
@@ -24,6 +27,7 @@
     <ClCompile Include="bit_functions.cuh" />
     <ClInclude Include="defines.h" />
     <ClInclude Include="methods.h" />
+    <CudaCompile Include="methods\shared_memory\smem_functions.cuh" />
     <ClInclude Include="wah_test.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">

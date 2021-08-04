@@ -34,11 +34,12 @@ const long int size_tests[1] = { 50000000 };
 int main() {
     if (UNIT_TESTING)
     {
-        int smem_wahs_count;
-        WAH_fun* smem_wahs = get_wahs(&smem_wahs_count);
-        for (int i = 0; i < smem_wahs_count; i++)
-        {
-        }
+        // int smem_wahs_count;
+        // WAH_fun* smem_wahs = get_wahs(&smem_wahs_count);
+        // for (int i = 0; i < smem_wahs_count; i++)
+        // {
+        // }
+        run();
         //UnitTests(&RemoveIfWAH);
         //UnitTests(&AtomicAddWAH);
 	    //UnitTests(&SharedMemWAH);
@@ -108,7 +109,7 @@ void RunWithBatch(int batch_reserve, int batch_pos, int batch_size, int threads_
     Benchmark(&OptimizedAtomicAddWAH, batch_reserve, d_data, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "optimized_atomicAdd;" + std::to_string(threads_per_block) + ";" + std::to_string(batch_size) + ";", threads_per_block);
     //cudaMemcpy(d_data, data, sizeof(UINT) * batch_reserve, cudaMemcpyHostToDevice);
     //TODO: change data to d_data, ensure that SharedMemWAH doesn't copy input, and uncomment line above
-    Benchmark(&SharedMemWAH, batch_reserve, data, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "sharedMem;" + std::to_string(threads_per_block) + ";" + std::to_string(batch_size) + ";", threads_per_block);
+    //Benchmark(&SharedMemWAH, batch_reserve, data, data_filename + ";" + std::to_string(batch_pos) + ";" + std::to_string(batch_reserve * 32) + ";" + "sharedMem;" + std::to_string(threads_per_block) + ";" + std::to_string(batch_size) + ";", threads_per_block);
     
    
     cudaFree(d_data);

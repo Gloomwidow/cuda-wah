@@ -1,6 +1,4 @@
 // This file is safe to #define without any #ifndefs
-
-#include <cooperative_groups.h>
 #ifndef UINT
 #define UINT unsigned int
 #endif // !UINT
@@ -22,8 +20,10 @@
 #endif // !EMPTY_MASK
 
 #ifndef UNIT_TESTING
-#define UNIT_TESTING false
+#define UNIT_TESTING true
 #endif // !FULL_MASK
+
+
 
 #ifndef CUDA_CHECK
 #define CUDA_CHECK(call, label)																		\
