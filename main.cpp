@@ -33,6 +33,11 @@ const long int size_tests[1] = { 1024 };
 int main() {
     if (UNIT_TESTING)
     {
+        int smem_wahs_count;
+        WAH_fun* smem_wahs = get_wahs(&smem_wahs_count);
+        for (int i = 0; i < smem_wahs_count; i++)
+        {
+        }
         //UnitTests(&RemoveIfWAH);
         //UnitTests(&AtomicAddWAH);
 	    //UnitTests(&SharedMemWAH);
