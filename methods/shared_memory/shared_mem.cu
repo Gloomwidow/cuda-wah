@@ -7,6 +7,8 @@
 #include <ctime>
 #include "../../bit_functions.cuh"
 #include "get_segmentlen_inblock.cu"
+#include "scan_inblock.cu"
+#include "calc_segmentlen_inblock.cu"
 
 #define MAX(a,b) (((a)>(b)) ? (a) : (b))
 
