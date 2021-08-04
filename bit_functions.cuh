@@ -1,36 +1,12 @@
 #include "device_launch_parameters.h"
 #include "defines.h"
 
-#ifndef WORD_TYPE_ENUM
-#define WORD_TYPE_ENUM
+
 enum WORD_TYPE {
 	EMPTY_WORD = 0,
 	FULL_WORD = 1,
 	TAIL_WORD = 2
 };
-#endif // WORD_TYPE_ENUM
-
-#ifndef SEGMENT_STRUCT
-#define SEGMENT_STRUCT
-typedef struct segment {
-	WORD_TYPE l_end_type;
-	int l_end_len;
-
-	WORD_TYPE r_end_type;
-	int r_end_len;
-} segment;
-#endif // SEGMENT_STRUCT
-
-#ifndef SEGMENT_SOA_STRUCT
-#define SEGMENT_SOA_STRUCT
-typedef struct segment_soa {
-	WORD_TYPE* l_end_type;
-	int* l_end_len;
-
-	WORD_TYPE* r_end_type;
-	int* r_end_len;
-} segment_soa;
-#endif // SEGMENT_SOA_STRUCT
 
 __host__ __device__ WORD_TYPE get_word_type(UINT gulp);
 
@@ -66,8 +42,6 @@ void printBits(size_t const size, void const * const ptr);
 
 __global__ void ballot_warp_merge(int input_size, UINT* input, UINT* output);
 
-#ifndef WAH_ZERO_STRUCT
-#define WAH_ZERO_STRUCT
 struct wah_zero
 {
 	__host__ __device__
@@ -76,4 +50,3 @@ struct wah_zero
 		return x == 0;
 	}
 };
-#endif // WAH_ZERO_STRUCT
