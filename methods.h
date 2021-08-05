@@ -1,4 +1,5 @@
 #pragma once
+#include "defines.h"
 void WarmUp();
 UINT* RemoveIfWAH(int data_size, UINT* input, int threads_per_block);
 UINT* AtomicAddWAH(int data_size, UINT* input, int threads_per_block);

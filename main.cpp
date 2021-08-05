@@ -36,7 +36,7 @@ int main() {
     {
         //UnitTests(&RemoveIfWAH);
         //UnitTests(&AtomicAddWAH);
-	    //UnitTests(&SharedMemWAH);
+	    UnitTests(&SharedMemWAH);
 	    //UnitTests(&RemoveIfSharedMemWAH);
         //UnitTests(&OptimizedRemoveIfWAH);
         //UnitTests(&OptimizedAtomicAddWAH);

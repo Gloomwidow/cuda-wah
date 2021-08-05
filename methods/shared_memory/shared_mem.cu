@@ -7,7 +7,8 @@
 #include <ctime>
 #include "../../bit_functions.cuh"
 
-#define MAX(a,b) (((a)>(b)) ? (a) : (b))
+#define MAX(a, b) (((a)>(b)) ? (a) : (b))
+#define MIN(a, b) (((a)<(b)) ? (a) : (b))
 
 
 namespace cg = cooperative_groups;
@@ -120,7 +121,7 @@ __device__ void inclusive_scan_inblock_sync(int* value, void* smem_ptr, int lane
 
 
 
-__device__ inline bool calc_segmentlen_ingrid_sync(int* segment_len, int* index, bool* is_begin, WORD_TYPE w_type, void* smem_ptr, void* output, int lane_id, int warp_id, int warps_count, cg::grid_group grid)
+__device__ bool calc_segmentlen_ingrid_sync(int* segment_len, int* index, bool* is_begin, WORD_TYPE w_type, void* smem_ptr, void* output, int lane_id, int warp_id, int warps_count, cg::grid_group grid)
 {
 	segment* block_segments = (segment*)output;															// this allocation is just being reused
 	unsigned* block_begins_masks = (unsigned*)smem_ptr;
@@ -307,13 +308,14 @@ long long LaunchKernel(int blocks, int threads_per_block, UINT* d_input, int siz
 	int numBlocksPerSm = 0;																				// calc max number of blocks in coop. launch
 	CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, SharedMemKernel, threads_per_block, smem_size), Fail);
 	int maxCoopBlocks = deviceProp.multiProcessorCount * numBlocksPerSm;
-	// printf("needed blocks: %d, max blocks: %d\n", blocks, maxCoopBlocks);
+	maxCoopBlocks = MIN(maxCoopBlocks, threads_per_block);
+	printf("needed blocks: %d, max blocks: %d\n", blocks, maxCoopBlocks);
 
-	if (blocks > maxCoopBlocks && threads_per_block < maxCoopBlocks)
-	{
-		printf("insufficient number of threads_per_block to make cooperative scan on whole grid\n");	// this can only happen when GPU has very many of SMs
-		return -1;																						// (or more precisely: cooperative launch can handle many blocks)
-	}																									// and blockSize is smaller than that
+	// if (blocks > maxCoopBlocks && threads_per_block < maxCoopBlocks)
+	// {
+	// 	printf("insufficient number of threads_per_block to make cooperative scan on whole grid\n");	// this can only happen when GPU has very many of SMs
+	// 	return -1;																						// (or more precisely: cooperative launch can handle many blocks)
+	// }																									// and blockSize is smaller than that
 
 	int maxGridSize = maxCoopBlocks * threads_per_block;
 	void* params[4];
@@ -335,6 +337,7 @@ long long LaunchKernel(int blocks, int threads_per_block, UINT* d_input, int siz
 	// 	noOfPacks++;
 	while (blocks_left > maxCoopBlocks)																		// if one coop. launch cannot handle the whole input, handle it in parts
 	{
+		printf("A. blocks_left: %d, maxCoopBlocks: %d\n", blocks_left, maxCoopBlocks);
 		CUDA_CHECK(cudaLaunchCooperativeKernel((void*)SharedMemKernel, maxCoopBlocks, threads_per_block, params, smem_size), Fail);
 		CUDA_CHECK(cudaGetLastError(), Fail);
 		CUDA_CHECK(cudaDeviceSynchronize(), Fail);
@@ -342,6 +345,8 @@ long long LaunchKernel(int blocks, int threads_per_block, UINT* d_input, int siz
 		size_t oSizeTmp;
 		CUDA_CHECK(cudaMemcpy(&oSizeTmp, d_outputSize, sizeof(size_t), cudaMemcpyDeviceToHost), Fail);
 		// CUDA_CHECK(cudaMemcpy(outp_curr_ptr, *(params[2]), outputSize * sizeof(UINT), cudaMemcpyDeviceToHost), Fail);
+		// d_inp = &(d_inp[maxGridSize]);
+		// d_outp = &(d_outp[maxGridSize]);
 		d_inp += maxGridSize;
 		d_outp += oSizeTmp;
 		outputSize += oSizeTmp;
@@ -351,6 +356,7 @@ long long LaunchKernel(int blocks, int threads_per_block, UINT* d_input, int siz
 	}
 	if (blocks_left > 0)																				// handle the rest of input
 	{
+		printf("B. blocks_left: %d, maxCoopBlocks: %d\n", blocks_left, maxCoopBlocks);
 		params[1] = &size_left;
 		CUDA_CHECK(cudaLaunchCooperativeKernel((void*)SharedMemKernel, blocks_left, threads_per_block, params, smem_size), Fail);
 		CUDA_CHECK(cudaGetLastError(), Fail);
@@ -361,18 +367,20 @@ long long LaunchKernel(int blocks, int threads_per_block, UINT* d_input, int siz
 		outputSize += oSizeTmp;
 	}
 
-	int threads_p_block = 512;
-	int blcks = outputSize / threads_p_block;
-	if (outputSize % threads_p_block != 0)
+	int blcks = outputSize / threads_per_block;
+	if (outputSize % threads_per_block != 0)
 		blcks++;
-	ballot_warp_merge << <blcks, threads_p_block >> > (outputSize, d_output, d_input);						// join parts
+	printf("outputSize: %d, blocks: %d, threads_per_block: %d\n", outputSize, blcks, threads_per_block);
+	// printf("outputSize: %d\n", outputSize);
+	ballot_warp_merge<<<blcks, threads_per_block>>>(outputSize, d_output, d_input);					// join parts
 	CUDA_CHECK(cudaGetLastError(), Fail);
 	CUDA_CHECK(cudaDeviceSynchronize(), Fail);
 
 	UINT* final_end = thrust::remove_if(thrust::device, d_input, d_input + outputSize, wah_zero());		// remove leftover gaps
 	int final_count = final_end - d_input;
 
-	return final_count;
+	// return final_count;
+	return outputSize;
 
 Fail:
 	return -1;
@@ -416,7 +424,7 @@ UINT* SharedMemWAH(int size, UINT* input, int __threads_per_block)
 	CUDA_CHECK(cudaMalloc((void**)&d_outputSize, sizeof(size_t)), FreeOutput);
 	CUDA_CHECK(cudaMemcpy(d_input, input, size * sizeof(UINT), cudaMemcpyHostToDevice), Free);
 
-	int threads_per_block = 1024;
+	int threads_per_block = 512;
 	int blocks = size / threads_per_block;
 	if (size % threads_per_block != 0)
 		blocks++;

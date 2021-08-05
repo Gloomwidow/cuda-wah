@@ -112,6 +112,8 @@ __global__ void ballot_warp_merge(int input_size, UINT* input, UINT* output)
 {
     int global_id = blockIdx.x * blockDim.x + threadIdx.x;
 
+    if (global_id >= input_size) return;
+
     UINT curr = input[global_id];
     output[global_id] = 0;
     bool checks_next = true;

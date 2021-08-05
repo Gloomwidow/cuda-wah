@@ -7,10 +7,10 @@
 #include <vector>
 #include <fstream>
 #include <string>
-#define MISMATCH_MAX 20
+#define MISMATCH_MAX 0
 
 int last_wah_count = 0;
-int tests_threads_per_block = 128;
+int tests_threads_per_block = 1024;
 
 UINT* CpuWAH(int data_size,UINT* data)
 {
