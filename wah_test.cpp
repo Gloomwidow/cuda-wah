@@ -92,11 +92,12 @@ void Test(UINT* (*tested_function)(int,UINT*,int),int data_size, UINT* data, int
 	printf("TEST '%s' - Input Size: %u \n", test_name.c_str(), dsize);
 	printf("=======================================================\n");
 	UINT* actual = tested_function(dsize, d_data, tests_threads_per_block);
+	// printf("expected outputSize: %d\n", expected_size);
 	printf("=======================================================\n");
 	cudaFree(d_data);
 	if (actual == nullptr)
 	{
-		printf("FAILED: function did not return any data!");
+		printf("\033[0;31mFAILED: function did not return any data!\033[0m\n");
 		return;
 	}
 	int size = expected_size;
@@ -115,8 +116,8 @@ void Test(UINT* (*tested_function)(int,UINT*,int),int data_size, UINT* data, int
 		}
 	}
 	delete[] actual;
-	if (mismatches == 0) printf("PASSED\n");
-	else printf("FAILED: Found mismatches. Count: %d\n", mismatches);
+	if (mismatches == 0) printf("\033[0;32mPASSED\033[0m\n");
+	else printf("\033[0;31mFAILED: Found mismatches. Count: %d\033[0m\n", mismatches);
 	
 }
 
@@ -148,9 +149,6 @@ void Benchmark(UINT* (*tested_function)(int, UINT*, int), int data_size, UINT* d
 	exec_time /= 1000;
 	std::string resultRow;
 	resultRow += bench_name;
-	resultRow += ";";
-	resultRow += std::to_string(int(data_size * 32 / exec_time));
-	resultRow += ";";
 	std::string timeString = std::to_string(exec_time);
 	std::replace(timeString.begin(), timeString.end(), '.', ',');
 	resultRow += timeString;

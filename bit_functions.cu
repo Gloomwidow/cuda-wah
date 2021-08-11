@@ -73,6 +73,11 @@ __host__ __device__ UINT compressed_count(UINT src)
 	return src;
 }
 
+__host__ __device__ bool isPowerOfTwo(int n)
+{
+	return n && (!(n & (n-1)));
+}
+
 void printBits(size_t const size, void const * const ptr)
 {
 	unsigned char *b = (unsigned char*)ptr;

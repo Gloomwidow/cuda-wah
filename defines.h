@@ -1,6 +1,12 @@
 // This file is safe to #define without any #ifndefs
 
-#include <cooperative_groups.h>
+#define UNROLLED_PRESCANS
+#ifdef UNROLLED_PRESCANS
+	#define WARPSIZE 32
+	#define BLOCKSIZE 32
+	#define WARPSCOUNT (BLOCKSIZE / WARPSIZE)
+#endif
+
 #ifndef UINT
 #define UINT unsigned int
 #endif // !UINT
@@ -22,7 +28,7 @@
 #endif // !EMPTY_MASK
 
 #ifndef UNIT_TESTING
-#define UNIT_TESTING true
+#define UNIT_TESTING false
 #endif // !FULL_MASK
 
 #ifndef CUDA_CHECK

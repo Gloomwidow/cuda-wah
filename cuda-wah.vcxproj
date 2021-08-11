@@ -15,6 +15,9 @@
     <CudaCompile Include="methods\atomic_add\atomic_add_wah.cu" />
     <CudaCompile Include="methods\remove_if\remove_if_wah.cu" />
     <CudaCompile Include="methods\shared_memory\shared_mem.cu" />
+    <CudaCompile Include="methods\shared_memory\get_segmentlen_inblock.cu" />
+    <CudaCompile Include="methods\shared_memory\calc_segmentlen_ingrid.cu" />
+    <CudaCompile Include="methods\shared_memory\prescan_inblock.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
@@ -24,11 +27,16 @@
     <ClCompile Include="bit_functions.cuh" />
     <ClInclude Include="defines.h" />
     <ClInclude Include="methods.h" />
+    <ClInclude Include="methods\shared_memory\calc_segmentlen_ingrid.cuh" />
+    <ClInclude Include="methods\shared_memory\get_segmentlen_inblock.cuh" />
+    <ClInclude Include="methods\shared_memory\prescan_inblock.cuh" />
+    <ClInclude Include="methods\shared_memory\segment_structs.cuh" />
     <ClInclude Include="wah_test.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{70160356-5E8F-46A8-9DAB-0F3219A5EE5F}</ProjectGuid>
     <RootNamespace>cuda_wah</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.19041.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">

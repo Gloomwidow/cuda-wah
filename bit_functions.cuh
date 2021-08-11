@@ -1,12 +1,14 @@
 #include "device_launch_parameters.h"
 #include "defines.h"
 
-
+#ifndef WORD_TYPE_ENUM
+#define WORD_TYPE_ENUM
 enum WORD_TYPE {
 	EMPTY_WORD = 0,
 	FULL_WORD = 1,
 	TAIL_WORD = 2
 };
+#endif
 
 __host__ __device__ WORD_TYPE get_word_type(UINT gulp);
 
@@ -38,10 +40,14 @@ __host__ __device__ UINT get_reversed_bit(UINT src, int bitNo);
 //returns amount of sequences compressed in src block
 __host__ __device__ UINT compressed_count(UINT src);
 
+__host__ __device__ bool isPowerOfTwo(int n);
+
 void printBits(size_t const size, void const * const ptr);
 
 __global__ void ballot_warp_merge(int input_size, UINT* input, UINT* output);
 
+#ifndef WAH_ZERO_STRUCT
+#define WAH_ZERO_STRUCT
 struct wah_zero
 {
 	__host__ __device__
@@ -50,3 +56,4 @@ struct wah_zero
 		return x == 0;
 	}
 };
+#endif
